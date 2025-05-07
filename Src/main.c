@@ -50,6 +50,49 @@ static void APP_GpioConfig(void);
 void LED_Toggle_Callback(void *param);
 
 /**
+ * @brief         设置系统时钟为48Mhz，必须在HAL_Init之后调用
+ * 
+ */
+static void APP_SystemClockConfig(void)
+{
+  RCC_OscInitTypeDef RCC_OscInitStruct = {0};
+  RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
+ 
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE
+                                    | RCC_OSCILLATORTYPE_HSI
+                                    | RCC_OSCILLATORTYPE_LSE
+                                    | RCC_OSCILLATORTYPE_LSI;
+  RCC_OscInitStruct.HSIState = RCC_HSI_ON;                            /* HSI ON */
+  RCC_OscInitStruct.HSIDiv = RCC_HSI_DIV1;                            /* No division */
+  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_24MHz;   /* HSI = 24MHz */
+  RCC_OscInitStruct.HSEState = RCC_HSE_OFF;                           /* OFF */
+  RCC_OscInitStruct.LSIState = RCC_LSI_OFF;                           /* OFF */
+  RCC_OscInitStruct.LSEState = RCC_LSE_OFF;                           /* OFF */
+  // 以上部分和使用HSI作为时钟源是一样的, 以下是PLL相关的设置, 首先是开启PLL
+  RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
+  // 将PLL时钟源设置为内部高速, HSI频率需要高于12MHz
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
+  // 应用设置
+  if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
+  {
+    APP_ErrorHandler();
+  }
+  // 设置系统时钟
+  RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK | RCC_CLOCKTYPE_SYSCLK | RCC_CLOCKTYPE_PCLK1;
+  // 设置PLL为系统时钟源
+  RCC_ClkInitStruct.SYSCLKSource = RCC_SYSCLKSOURCE_PLLCLK;
+  // AHB 不分频
+  RCC_ClkInitStruct.AHBCLKDivider = RCC_SYSCLK_DIV1;
+  // APB 不分频
+  RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV1;
+  // 应用设置
+  if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_1) != HAL_OK)
+  {
+    APP_ErrorHandler();
+  }
+}
+
+/**
   * @brief  Main program.
   * @retval int
   */
@@ -57,6 +100,7 @@ int main(void)
 {
   /* Reset of all peripherals, Initializes the Systick */
   HAL_Init();                                  
+  APP_SystemClockConfig(); /* Configure the system clock */
   
   /* Initialize GPIO */
   APP_GpioConfig();
@@ -65,6 +109,8 @@ int main(void)
   /* 初始化软件定时器 */
   SoftTimer_Init();
   
+
+  printf("SystemCoreClock: %d\r\n", SystemCoreClock);
 
   /* 创建LED闪烁定时器(无限循环) */
   uint8_t timer1 = SoftTimer_Create(1000, 0, LED_Toggle_Callback, NULL);
@@ -117,6 +163,7 @@ void APP_ErrorHandler(void)
 {
   while (1)
   {
+    
   }
 }
 

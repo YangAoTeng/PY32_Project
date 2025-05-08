@@ -32,17 +32,11 @@
 #include "bsp_usart.h"
 #include "soft_timer.h"
 #include "ring_buffer.h"
+#include "bsp_24c02.h"  /* 添加24C02头文件 */
+#include "bsp_at.h"     /* 添加AT命令处理头文件 */
 
 /* Private define ------------------------------------------------------------*/
-#define LED_GPIO_PIN                 LED3_PIN
-#define LED_GPIO_PORT                LED3_GPIO_PORT
-#define LED_GPIO_CLK_ENABLE()        LED3_GPIO_CLK_ENABLE()
-
-
-
 /* Private variables ---------------------------------------------------------*/
-
-
 /* Private user code ---------------------------------------------------------*/
 /* Private macro -------------------------------------------------------------*/
 /* Private function prototypes -----------------------------------------------*/
@@ -92,6 +86,26 @@ static void APP_SystemClockConfig(void)
   }
 }
 
+
+/**
+  * @brief  处理串口接收数据任务，作为软件定时器回调函数
+  * @param  param 回调函数参数
+  * @retval None
+  */
+void UART_Process_Task(void *param)
+{
+    uint8_t data;
+    
+    /* 从环形缓冲区读取数据 */
+    while (!RingBuffer_IsEmpty(&uart_rx_ring_buffer))
+    {
+        RingBuffer_Read(&uart_rx_ring_buffer, &data);
+        printf("%c", data);
+        // /* 传递数据给AT命令处理模块 */
+        // AT_ProcessRxData(data);
+    }
+}
+
 /**
   * @brief  Main program.
   * @retval int
@@ -106,21 +120,33 @@ int main(void)
   APP_GpioConfig();
   /* Initialize UART1 */
   bsp_usart1_init();
+  
   /* 初始化软件定时器 */
   SoftTimer_Init();
+  /* 初始化EEPROM */
+  EEPROM_Init();
+  // /* 初始化AT命令处理模块 */
+  // AT_Init();
   
-
   printf("SystemCoreClock: %d\r\n", SystemCoreClock);
+  printf("AT command interface ready, type 'AT+HELP' for help\r\n");
 
   /* 创建LED闪烁定时器(无限循环) */
-  uint8_t timer1 = SoftTimer_Create(1000, 0, LED_Toggle_Callback, NULL);
-  printf("LED toggle timer created, ID: %d\r\n", timer1);
-
+  // uint8_t timer1 = SoftTimer_Create(1000, 0, LED_Toggle_Callback, NULL);
+  // printf("LED toggle timer created, ID: %d\r\n", timer1);
+  
+  /* 创建UART处理定时器，10ms周期执行 */
+  uint8_t timer2 = SoftTimer_Create(10, 0, UART_Process_Task, NULL);
+  printf("UART process timer created, ID: %d\r\n", timer2);
+  
+  
   while (1)
   {
-    SoftTimer_Execute();
+      /* 执行软件定时器 */
+      SoftTimer_Execute();
   }
 }
+
 
 /**
   * @brief  LED闪烁回调函数
@@ -153,6 +179,7 @@ static void APP_GpioConfig(void)
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET); /* Set PA5 to high */
 }
+
 
 /**
   * @brief  This function is executed in case of error occurrence.
@@ -187,3 +214,4 @@ void assert_failed(uint8_t *file, uint32_t line)
 #endif /* USE_FULL_ASSERT */
 
 /************************ (C) COPYRIGHT Puya *****END OF FILE******************/
+

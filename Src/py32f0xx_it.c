@@ -32,6 +32,7 @@
 #include "main.h"
 #include "py32f0xx_it.h"
 #include "soft_timer.h"
+#include "bsp_usart.h"
 /* Private includes ----------------------------------------------------------*/
 /* Private typedef -----------------------------------------------------------*/
 /* Private define ------------------------------------------------------------*/
@@ -83,6 +84,11 @@ void SysTick_Handler(void)
   HAL_IncTick();
   /* 更新软件定时器系统时间，HAL库默认SysTick是1ms中断 */
   SoftTimer_UpdateTick(1);
+}
+
+void USART1_IRQHandler(void)
+{
+  HAL_UART_IRQHandler(&huart1); // 调用HAL库的UART中断处理函数
 }
 
 /******************************************************************************/

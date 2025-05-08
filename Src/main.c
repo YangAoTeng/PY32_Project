@@ -42,6 +42,7 @@
 /* Private function prototypes -----------------------------------------------*/
 static void APP_GpioConfig(void);
 void LED_Toggle_Callback(void *param);
+void IO_Status_Read_Task(void *param); /* 添加IO状态读取任务的函数声明 */
 
 /**
  * @brief         设置系统时钟为48Mhz，必须在HAL_Init之后调用
@@ -107,6 +108,25 @@ void UART_Process_Task(void *param)
 }
 
 /**
+  * @brief  IO状态读取任务，作为软件定时器回调函数
+  * @param  param 回调函数参数
+  * @retval None
+  */
+void IO_Status_Read_Task(void *param)
+{
+    /* 读取PB0、PB1和PB2的IO状态 */
+    GPIO_PinState pb0_state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0);
+    GPIO_PinState pb1_state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_1);
+    GPIO_PinState pb2_state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_2);
+    
+    /* 打印IO状态 */
+    printf("IO Status: PB0=%d, PB1=%d, PB2=%d\r\n", 
+           pb0_state == GPIO_PIN_SET ? 1 : 0,
+           pb1_state == GPIO_PIN_SET ? 1 : 0,
+           pb2_state == GPIO_PIN_SET ? 1 : 0);
+}
+
+/**
   * @brief  Main program.
   * @retval int
   */
@@ -132,13 +152,16 @@ int main(void)
   printf("AT command interface ready, type 'AT+HELP' for help\r\n");
 
   /* 创建LED闪烁定时器(无限循环) */
-  // uint8_t timer1 = SoftTimer_Create(1000, 0, LED_Toggle_Callback, NULL);
-  // printf("LED toggle timer created, ID: %d\r\n", timer1);
+  uint8_t timer1 = SoftTimer_Create(1000, 0, LED_Toggle_Callback, NULL);
+  printf("LED toggle timer created, ID: %d\r\n", timer1);
   
   /* 创建UART处理定时器，10ms周期执行 */
   uint8_t timer2 = SoftTimer_Create(10, 0, UART_Process_Task, NULL);
   printf("UART process timer created, ID: %d\r\n", timer2);
   
+  /* 创建IO状态读取定时器，10ms周期执行 */
+  uint8_t timer3 = SoftTimer_Create(1000, 0, IO_Status_Read_Task, NULL);
+  printf("IO status read timer created, ID: %d\r\n", timer3);
   
   while (1)
   {
@@ -171,6 +194,8 @@ static void APP_GpioConfig(void)
 
   // PA5 RCC
   __HAL_RCC_GPIOA_CLK_ENABLE();
+  // 启用GPIOB时钟
+  __HAL_RCC_GPIOB_CLK_ENABLE();
 
   GPIO_InitStruct.Pin = GPIO_PIN_5;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP; /* Push-pull output */
@@ -178,6 +203,13 @@ static void APP_GpioConfig(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW; /* Low speed */
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
   HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET); /* Set PA5 to high */
+  
+  /* 配置PB0, PB1, PB2为输入模式 */
+  GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;     /* 输入模式 */
+  GPIO_InitStruct.Pull = GPIO_PULLUP;         /* 上拉电阻 */
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 }
 
 

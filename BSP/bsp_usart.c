@@ -72,6 +72,7 @@ int fputc(int ch, FILE *f)
    return ch;
 }
 
+extern void MODS_ReciveNew(uint8_t _byte);
 /**
   * @brief  UART接收完成回调函数
   * @param  huart: UART句柄
@@ -81,12 +82,13 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     if (huart->Instance == USART1)
     {
-        /* 将接收到的数据写入环形缓冲区 */
-        if (!RingBuffer_IsFull(&uart_rx_ring_buffer))
-        {
-            RingBuffer_Write(&uart_rx_ring_buffer, rx_buffer);
-        }
-        
+        // /* 将接收到的数据写入环形缓冲区 */
+        // if (!RingBuffer_IsFull(&uart_rx_ring_buffer))
+        // {
+        //     RingBuffer_Write(&uart_rx_ring_buffer, rx_buffer);
+        // }
+        MODS_ReciveNew(rx_buffer); // 调用MODS_ReciveNew函数处理接收到的数据
+        // printf("%c", rx_buffer); // 打印接收到的数据
         /* 重新启动接收以继续接收数据 */
         HAL_UART_Receive_IT(&huart1, (uint8_t *)&rx_buffer, 1);
     }

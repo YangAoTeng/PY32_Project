@@ -34,6 +34,8 @@
 #include "ring_buffer.h"
 #include "bsp_24c02.h"  /* 添加24C02头文件 */
 #include "bsp_at.h"     /* 添加AT命令处理头文件 */
+#include "hardware_timr.h" /* 添加硬件定时器头文件 */
+#include "modbus_slave.h" /* 添加Modbus从站头文件 */
 
 /* Private define ------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
@@ -126,6 +128,14 @@ void IO_Status_Read_Task(void *param)
            pb2_state == GPIO_PIN_SET ? 1 : 0);
 }
 
+
+void HardTimer_Callback(void *param)
+{
+    printf("TIM3->CNT: %d\r\n", TIM3->CNT);
+    printf("Hard Timer Callback\r\n");
+    // HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+}
+
 /**
   * @brief  Main program.
   * @retval int
@@ -147,26 +157,33 @@ int main(void)
   EEPROM_Init();
   // /* 初始化AT命令处理模块 */
   // AT_Init();
-  
+
+
+
+
   printf("SystemCoreClock: %d\r\n", SystemCoreClock);
-  printf("AT command interface ready, type 'AT+HELP' for help\r\n");
+  // printf("AT command interface ready, type 'AT+HELP' for help\r\n");
+
+
 
   /* 创建LED闪烁定时器(无限循环) */
   uint8_t timer1 = SoftTimer_Create(1000, 0, LED_Toggle_Callback, NULL);
-  printf("LED toggle timer created, ID: %d\r\n", timer1);
+  // printf("LED toggle timer created, ID: %d\r\n", timer1);
   
-  /* 创建UART处理定时器，10ms周期执行 */
-  uint8_t timer2 = SoftTimer_Create(10, 0, UART_Process_Task, NULL);
-  printf("UART process timer created, ID: %d\r\n", timer2);
+  // /* 创建UART处理定时器，10ms周期执行 */
+  // uint8_t timer2 = SoftTimer_Create(10, 0, UART_Process_Task, NULL);
+  // printf("UART process timer created, ID: %d\r\n", timer2);
   
-  /* 创建IO状态读取定时器，10ms周期执行 */
-  uint8_t timer3 = SoftTimer_Create(1000, 0, IO_Status_Read_Task, NULL);
-  printf("IO status read timer created, ID: %d\r\n", timer3);
-  
+  // /* 创建IO状态读取定时器，10ms周期执行 */
+  // uint8_t timer3 = SoftTimer_Create(1000, 0, IO_Status_Read_Task, NULL);
+  // printf("IO status read timer created, ID: %d\r\n", timer3);
+  bsp_InitHardTimer();
+  // bsp_StartHardTimer(1, 65535, HardTimer_Callback);
   while (1)
   {
       /* 执行软件定时器 */
       SoftTimer_Execute();
+      MODS_Poll();
   }
 }
 
@@ -178,8 +195,10 @@ int main(void)
   */
 void LED_Toggle_Callback(void *param)
 {
-  printf("LED Toggle Callback\r\n");
+  // printf("LED Toggle Callback\r\n");MODS_Poll
   HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+  // 打印TIM3->CNT的值
+  // printf("TIM3->CNT: %d\r\n", TIM3->CNT);
 }
 
 

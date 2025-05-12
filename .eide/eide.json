@@ -65,10 +65,13 @@
             "path": "BSP/bsp_at.h"
           },
           {
-            "path": "BSP/bsp_oled.c"
+            "path": "BSP/modbus_slave.c"
           },
           {
-            "path": "BSP/OLED_Function.c"
+            "path": "BSP/hardware_timr.c"
+          },
+          {
+            "path": "BSP/msg_fifo.c"
           }
         ],
         "folders": [
@@ -195,7 +198,9 @@
   "targets": {
     "Project": {
       "excludeList": [
-        "<virtual_root>/BSP/py32f030xx_Start_Kit"
+        "<virtual_root>/BSP/py32f030xx_Start_Kit",
+        "<virtual_root>/BSP/OLED_Function.c",
+        "<virtual_root>/BSP/bsp_oled.c"
       ],
       "toolchain": "AC5",
       "compileConfig": {
@@ -240,7 +245,7 @@
               "id": 1,
               "mem": {
                 "startAddr": "0x20000000",
-                "size": "0x2000"
+                "size": "0x1000"
               },
               "isChecked": true,
               "noInit": false
@@ -292,7 +297,7 @@
               "id": 1,
               "mem": {
                 "startAddr": "0x8000000",
-                "size": "0x10000"
+                "size": "0x8000"
               },
               "isChecked": true,
               "isStartup": true

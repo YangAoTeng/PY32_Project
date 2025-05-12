@@ -64,16 +64,16 @@ typedef struct
 
 typedef struct
 {	/* 03H 06H 读写保持寄存器 */
-	uint16_t P[32];    /* 支持最多32个保持寄存器 */
+	uint16_t P[P_REG_SIZE];    /* 支持最多32个保持寄存器 */
 
 	/* 04H 读取模拟量寄存器 */
-	uint16_t A[32];    /* 支持最多32个模拟量寄存器 */
+	uint16_t A[A_REG_SIZE];    /* 支持最多32个模拟量寄存器 */
 
 	/* 01H 05H 读写单个强制线圈 */
-	uint16_t D[32];    /* 支持最多32个线圈状态 */
+	uint16_t D[D_COIL_SIZE];    /* 支持最多32个线圈状态 */
 	
 	/* 02H 读取输入状态 */
-	uint8_t T[32];    /* 支持最多32个输入状态 */
+	uint8_t T[T_INPUT_SIZE];    /* 支持最多32个输入状态 */
 
 }VAR_T;
 

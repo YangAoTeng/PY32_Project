@@ -36,6 +36,7 @@
 #include "bsp_at.h"     /* 添加AT命令处理头文件 */
 #include "hardware_timr.h" /* 添加硬件定时器头文件 */
 #include "modbus_slave.h" /* 添加Modbus从站头文件 */
+#include "msg_fifo.h" /* 添加消息FIFO头文件 */
 
 /* Private define ------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
@@ -45,6 +46,8 @@
 static void APP_GpioConfig(void);
 void LED_Toggle_Callback(void *param);
 void IO_Status_Read_Task(void *param); /* 添加IO状态读取任务的函数声明 */
+
+MSG_T g_tMsg;
 
 /**
  * @brief         设置系统时钟为48Mhz，必须在HAL_Init之后调用
@@ -120,12 +123,9 @@ void IO_Status_Read_Task(void *param)
     GPIO_PinState pb0_state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0);
     GPIO_PinState pb1_state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_1);
     GPIO_PinState pb2_state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_2);
-    
-    /* 打印IO状态 */
-    printf("IO Status: PB0=%d, PB1=%d, PB2=%d\r\n", 
-           pb0_state == GPIO_PIN_SET ? 1 : 0,
-           pb1_state == GPIO_PIN_SET ? 1 : 0,
-           pb2_state == GPIO_PIN_SET ? 1 : 0);
+    MODS_WriteRegister(1, 0, pb0_state); /* 写入PB0状态 */
+    MODS_WriteRegister(1, 1, pb1_state); /* 写入PB1状态 */
+    MODS_WriteRegister(1, 2, pb2_state); /* 写入PB2状态 */
 }
 
 
@@ -167,7 +167,7 @@ int main(void)
 
 
   /* 创建LED闪烁定时器(无限循环) */
-  uint8_t timer1 = SoftTimer_Create(1000, 0, LED_Toggle_Callback, NULL);
+  uint8_t timer1 = SoftTimer_Create(100, 0, LED_Toggle_Callback, NULL);
   printf("LED toggle timer created, ID: %d\r\n", timer1);
 
   SoftTimer_SetUserData(timer1, 12345);
@@ -177,9 +177,10 @@ int main(void)
   // printf("UART process timer created, ID: %d\r\n", timer2);
   
   // /* 创建IO状态读取定时器，10ms周期执行 */
-  // uint8_t timer3 = SoftTimer_Create(1000, 0, IO_Status_Read_Task, NULL);
-  // printf("IO status read timer created, ID: %d\r\n", timer3);
+  uint8_t timer3 = SoftTimer_Create(1000, 0, IO_Status_Read_Task, NULL);
+  printf("IO status read timer created, ID: %d\r\n", timer3);
   bsp_InitHardTimer();
+  MODS_Init();
   // bsp_StartHardTimer(1, 65535, HardTimer_Callback);
   while (1)
   {
@@ -197,13 +198,28 @@ int main(void)
   */
 void LED_Toggle_Callback(void *param)
 {
-  // printf("LED Toggle Callback\r\n");MODS_Poll
-  HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
-  uint32_t task_data;
-  SoftTimer_GetUserData(0, &task_data);
-  printf("Task data: %d\r\n", task_data);
-  // 打印TIM3->CNT的值
-  // printf("TIM3->CNT: %d\r\n", TIM3->CNT);
+  uint16_t led = 0;
+  if (bsp_GetMsg(&g_tModS_Fifo, &g_tMsg) == 0)
+  {
+    return; /* 没有消息 */
+  }
+  if (g_tMsg.MsgCode == MSG_MODS_05H)
+  {
+      MODS_ReadRegister(0, 0, &led); /* 读取线圈状态 */
+      if (led == 0xFF00)
+      {
+          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET); /* Set LED to low */
+      }
+      else
+      {
+          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET); /* Set LED to high */
+      }
+
+  }
+  else
+  {
+      // printf("No MODBUS_MSG\r\n");
+  }
 }
 
 

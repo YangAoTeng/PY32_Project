@@ -1,19 +1,6 @@
-/*
-*********************************************************************************************************
-*
-*	模块名称 : MODS通信模块. 从站模式【原创】
-*	文件名称 : modbus_slave.c
-*	版    本 : V1.5
-*	说    明 : 头文件
-*
-*	Copyright (C), 2020-2030, 安富莱电子 www.armfly.com
-*
-*********************************************************************************************************
-*/
-// #include "sys.h"
+
 #include "modbus_slave.h"
 #include "hardware_timr.h"
-#include "msg_fifo.h"
 #include "string.h"
 #include "bsp_usart.h"
 
@@ -42,6 +29,7 @@ static uint8_t MODS_ReadRegValue(uint16_t reg_addr, uint8_t *reg_value);
 static uint8_t MODS_WriteRegValue(uint16_t reg_addr, uint16_t reg_value);
 
 void MODS_ReciveNew(uint8_t _byte);
+
 
 /*
 *********************************************************************************************************
@@ -172,6 +160,22 @@ const MODBUSBPS_T ModbusBaudRate[] =
 static uint8_t g_mods_timeout = 0;
 MODS_T g_tModS = {0};
 VAR_T g_tVar;
+MSG_FIFO_T g_tModS_Fifo;
+
+void MODS_Init(void)
+{
+	/* 初始化MODBUS从机数据结构体 */
+	g_tModS.RxCount = 0;
+	g_tModS.RxStatus = 0;
+	g_tModS.RxNewFlag = 0;
+	g_tModS.RspCode = RSP_OK;
+
+	/* 初始化变量数据结构体 */
+	memset((void *)&g_tVar, 0, sizeof(VAR_T));
+
+	/* 初始化消息FIFO */
+	bsp_InitMsg(&g_tModS_Fifo);
+}
 
 /*
 *********************************************************************************************************
@@ -350,37 +354,30 @@ static void MODS_AnalyzeApp(void)
 	{
 		case 0x01:							/* 读取线圈状态（此例程用led代替）*/
 			MODS_01H();
-			bsp_PutMsg(MSG_MODS_01H, 0);	/* 发送消息,主程序处理 */
 			break;
-
 		case 0x02:							/* 读取输入状态（按键状态）*/
 			MODS_02H();
-			bsp_PutMsg(MSG_MODS_02H, 0);
 			break;
 		
 		case 0x03:							/* 读取保持寄存器（此例程存在g_tVar中）*/
 			MODS_03H();
-			bsp_PutMsg(MSG_MODS_03H, 0);
 			break;
 		
 		case 0x04:							/* 读取输入寄存器（ADC的值）*/
 			MODS_04H();
-			bsp_PutMsg(MSG_MODS_04H, 0);
 			break;
 		
 		case 0x05:							/* 强制单线圈（设置led）*/
 			MODS_05H();
-			bsp_PutMsg(MSG_MODS_05H, 0);
+			bsp_PutMsg(&g_tModS_Fifo, MSG_MODS_05H, 0);	/* 发送消息到主程序 */
 			break;
 		
 		case 0x06:							/* 写单个保存寄存器（此例程改写g_tVar中的参数）*/
 			MODS_06H();	
-			bsp_PutMsg(MSG_MODS_06H, 0);
 			break;
 			
 		case 0x10:							/* 写多个保存寄存器（此例程存在g_tVar中的参数）*/
 			MODS_10H();
-			bsp_PutMsg(MSG_MODS_10H, 0);
 			break;
 		
 		default:
@@ -451,64 +448,26 @@ static void MODS_01H(void)
 	/* 数据是大端，要转换为小端 */
 	reg = BEBufToUint16(&g_tModS.RxBuf[2]); 			/* 寄存器号 */
 	num = BEBufToUint16(&g_tModS.RxBuf[4]);				/* 寄存器个数 */
-
-	/* 不足字节整数倍，补齐 */
+		/* 不足字节整数倍，补齐 */
 	m = (num + 7) / 8;
 	
 	/* 解析主机命令要读取的状态 */
-	if ((reg >= REG_D01) && (num > 0) && (reg + num <= REG_DXX + 1))
-	{
-		for (i = 0; i < m; i++)
+	if ((reg >= REG_D_START) && (num > 0) && (reg + num <= REG_D_END + 1))
+	{		for (i = 0; i < m; i++)
 		{
 			status[i] = 0;
 		}
 		
 		for (i = 0; i < num; i++)
 		{
-			// if (bsp_IsLedOn(i + 1 + reg - REG_D01))		/* 读LED的状态，写入状态寄存器的每一位 */
-			// {  
-			// 	status[i / 8] |= (1 << (i % 8));
-			// }
-			// status[i] = i;
-			// status[0] = 0xf;
-			// status[0] = 
-			// DEBUG_PRINTF(LEVEL_INFO, "D01 = %d\n", g_tVar.D01);
-			if (g_tVar.D01 > 60000)
+			uint8_t bit_index = i % 8;         /* 计算在当前字节中的位索引 */
+			uint8_t byte_index = i / 8;        /* 计算字节索引 */
+			uint16_t d_index = reg + i - REG_D_START; /* 计算D数组中的索引 */
+			
+			/* 检查对应的D[i]寄存器是否大于阈值（这里用60000） */
+			if (d_index < D_COIL_SIZE && g_tVar.D[d_index] > 60000)
 			{
-				// status[0] 的bit 0 为1
-				status[0] |= 0x01;
-			}else{
-				// status[0] 的bit 0 为0
-				status[0] &= ~0x01;
-			}
-
-			if (g_tVar.D02 > 60000)
-			{
-				// status[0] 的bit 1 为1
-				status[0] |= 0x02;
-			}else{
-				// status[0] 的bit 1 为0
-				status[0] &= ~0x02;
-			}
-
-			if (g_tVar.D03 > 60000)
-			{
-				// status[0] 的bit 2 为1
-				status[0] |= 0x04;
-			}else{
-				// status[0] 的bit 2 为0
-				status[0] &= ~0x04;
-			}
-
-			if (g_tVar.D04 > 60000)
-			{
-				// status[0] 的bit 3 为1
-				status[0] |= 0x08;
-			}
-			else
-			{
-				// status[0] 的bit 3 为0
-				status[0] &= ~0x08;
+				status[byte_index] |= (1 << bit_index);  /* 将对应的位设为1 */
 			}
 		}
 	}
@@ -596,12 +555,9 @@ static void MODS_02H(void)
 	/** 第2步： 数据解析 ===========================================================================*/
 	/* 数据是大端，要转换为小端 */
 	reg = BEBufToUint16(&g_tModS.RxBuf[2]); 			/* 寄存器号 */
-	num = BEBufToUint16(&g_tModS.RxBuf[4]);				/* 寄存器个数 */
-	// DEBUG_PRINTF(LEVEL_INFO, "reg: %d, num: %d\n", reg, num);
-	// printf("reg: %d, num: %d\n", reg, num);
-	/* 不足字节整数倍，补齐 */
+	num = BEBufToUint16(&g_tModS.RxBuf[4]);				/* 寄存器个数 */	/* 不足字节整数倍，补齐 */
 	m = (num + 7) / 8;
-	if ((reg >= REG_T01) && (num > 0) && (reg + num <= REG_TXX + 1))
+	if ((reg >= REG_T_START) && (num > 0) && (reg + num <= REG_T_END + 1))
 	{
 		for (i = 0; i < m; i++)
 		{
@@ -609,18 +565,20 @@ static void MODS_02H(void)
 		}
 		for (i = 0; i < num; i++)
 		{
-			// if (bsp_GetKeyState((KEY_ID_E)(KID_K1 + reg - REG_T01 + i)))
-			// {
-			// 	status[i / 8] |= (1 << (i % 8));
-			// }
-			status[0] = 0xff;
+			uint8_t bit_index = i % 8;         /* 计算在当前字节中的位索引 */
+			uint8_t byte_index = i / 8;        /* 计算字节索引 */
+			uint16_t t_index = reg + i - REG_T_START; /* 计算T数组中的索引 */
+			
+			/* 检查对应的T[i]寄存器状态 */
+			if (t_index < T_INPUT_SIZE && g_tVar.T[t_index] > 0)
+			{
+				status[byte_index] |= (1 << bit_index);  /* 将对应的位设为1 */			}
 		}
 	}
 	else
 	{
 		g_tModS.RspCode = RSP_ERR_REG_ADDR;				/* 寄存器地址错误 */
 	}
-
 	/** 第3步： 应答回复 =========================================================================*/
 	if (g_tModS.RspCode == RSP_OK)						/* 正确应答 */
 	{
@@ -654,18 +612,14 @@ static uint8_t MODS_ReadRegValue(uint16_t reg_addr, uint8_t *reg_value)
 {
 	uint16_t value;
 	
-	switch (reg_addr)									/* 判断寄存器地址 */
+	/* 判断寄存器地址是否在保持寄存器范围内 */
+	if ((reg_addr >= REG_P_START) && reg_addr <= REG_P_END)
 	{
-		case SLAVE_REG_P01:
-			value =	g_tVar.P01;	
-			break;
-
-		case SLAVE_REG_P02:
-			value =	g_tVar.P02;							/* 将寄存器值读出 */
-			break;
-	
-		default:
-			return 0;									/* 参数异常，返回 0 */
+		value = g_tVar.P[reg_addr - REG_P_START];
+	}
+	else
+	{
+		return 0;									/* 参数异常，返回 0 */
 	}
 
 	reg_value[0] = value >> 8;                          /* 注意数据是大端  */
@@ -685,18 +639,14 @@ static uint8_t MODS_ReadRegValue(uint16_t reg_addr, uint8_t *reg_value)
 */
 static uint8_t MODS_WriteRegValue(uint16_t reg_addr, uint16_t reg_value)
 {
-	switch (reg_addr)							/* 判断寄存器地址 */
-	{	
-		case SLAVE_REG_P01:
-			g_tVar.P01 = reg_value;				/* 将值写入保存寄存器 */
-			break;
-		
-		case SLAVE_REG_P02:
-			g_tVar.P02 = reg_value;				/* 将值写入保存寄存器 */
-			break;
-		
-		default:
-			return 0;		/* 参数异常，返回 0 */
+	/* 判断寄存器地址是否在保持寄存器范围内 */
+	if (reg_addr >= REG_P_START && reg_addr <= REG_P_END)
+	{
+		g_tVar.P[reg_addr - REG_P_START] = reg_value;	/* 将值写入保存寄存器 */
+	}
+	else
+	{
+		return 0;		/* 参数异常，返回 0 */
 	}
 
 	return 1;		/* 读取成功 */
@@ -750,7 +700,7 @@ static void MODS_03H(void)
 			01 03 7000 0020 5ED2         ---- 读 7000H 倒数第1条波形记录第1段 64字节
 			01 03 7001 0020 0F12         ---- 读 7001H 倒数第1条波形记录第2段 64字节
 
-			01 03 7040 0020 5F06         ---- 读 7040H 倒数第2条波形记录第1段 64字节
+			01 03 7040 0020 5F06         ---- 读 7040H 倒数第2条波形记录第1段
 	*/
 	uint16_t reg;
 	uint16_t num;
@@ -766,7 +716,6 @@ static void MODS_03H(void)
 		g_tModS.RspCode = RSP_ERR_VALUE;					/* 数据值域错误 */
 		goto err_ret;
 	}
-
 	/** 第2步： 数据解析 ===========================================================================*/
 	/* 数据是大端，要转换为小端 */
 	reg = BEBufToUint16(&g_tModS.RxBuf[2]); 				/* 寄存器号 */
@@ -776,6 +725,13 @@ static void MODS_03H(void)
 	if (num > sizeof(reg_value) / 2)
 	{
 		g_tModS.RspCode = RSP_ERR_VALUE;					/* 数据值域错误 */
+		goto err_ret;
+	}
+
+	/* 验证寄存器地址范围 */
+	if (reg < REG_P_START || (reg + num - 1) > REG_P_END)
+	{
+		g_tModS.RspCode = RSP_ERR_REG_ADDR;					/* 寄存器地址错误 */
 		goto err_ret;
 	}
 
@@ -854,9 +810,8 @@ static void MODS_04H(void)
 	uint16_t reg;
 	uint16_t num;
 	uint16_t i;
-	uint16_t status[10];
-
-	memset(status, 0, 20);
+	uint16_t status[A_REG_SIZE];
+	memset(status, 0, A_REG_SIZE); 
 
     /** 第1步： 判断接到指定个数数据 ===============================================================*/
 	/* 地址（8bit）+指令（8bit）+寄存器起始地址高低字节（16bit）+寄存器个数（16bit）+ CRC16 */
@@ -873,28 +828,18 @@ static void MODS_04H(void)
 	reg = BEBufToUint16(&g_tModS.RxBuf[2]); /* 寄存器号 */
 	num = BEBufToUint16(&g_tModS.RxBuf[4]);	/* 寄存器个数 */
 	
-	/* 读取数据 */
-	if ((reg >= REG_A01) && (num > 0) && (reg + num <= REG_AXX + 1))
-	{	
-		for (i = 0; i < num; i++)
-		{
-			switch (reg)
-			{
-				/* 测试参数 */
-				case REG_A01:
-					status[i] = g_tVar.A01;
-					break;
-					
-				default:
-					status[i] = 0;
-					break;
-			}
-			reg++;
-		}
-	}
-	else
+	/* 验证寄存器地址范围 */
+	if ((reg < REG_A_START) || (reg + num - 1) > REG_A_END)
 	{
 		g_tModS.RspCode = RSP_ERR_REG_ADDR;		/* 寄存器地址错误 */
+		goto err_ret;
+	}
+
+	
+	/* 读取数据 */
+	for (i = 0; i < num; i++)
+	{
+		status[i] = g_tVar.A[reg + i - REG_A_START];
 	}
 
 	/** 第3步： 应答回复 =========================================================================*/
@@ -978,31 +923,15 @@ static void MODS_05H(void)
 	/* 数据是大端，要转换为小端 */
 	reg = BEBufToUint16(&g_tModS.RxBuf[2]); 	/* 寄存器号 */
 	value = BEBufToUint16(&g_tModS.RxBuf[4]);	/* 数据 */
-	// DEBUG_PRINTF(LEVEL_INFO, "reg: %d, value: %d\n", reg, value);
-	// printf("reg: %d, value: %d\n", reg, value);
-	
 	if (value != 0x0000 && value != 0xFF00)
 	{
 		g_tModS.RspCode = RSP_ERR_VALUE;		/* 数据值域错误 */
 		goto err_ret;
 	}
-	
-	/* 设置数值 */
-	if (reg == REG_D01)
+		/* 设置数值 */
+	if (reg >= REG_D_START && reg <= REG_D_END)
 	{
-		g_tVar.D01 = value;
-	}
-	else if (reg == REG_D02)
-	{
-		g_tVar.D02 = value;
-	}
-	else if (reg == REG_D03)
-	{
-		g_tVar.D03 = value;
-	}
-	else if (reg == REG_D04)
-	{
-		g_tVar.D04 = value;
+		g_tVar.D[reg - REG_D_START] = value;
 	}
 	else
 	{
@@ -1213,3 +1142,107 @@ err_ret:
 }
 
 
+/**
+ * @brief 通用寄存器读取函数
+ * @param reg_type 寄存器类型：0=线圈(D)，1=输入状态(T)，2=保持寄存器(P)，3=输入寄存器(A)
+ * @param index 寄存器索引（从0开始）
+ * @param value 读取到的值的指针
+ * @return 0=失败，1=成功
+ */
+uint8_t MODS_ReadRegister(uint8_t reg_type, uint16_t index, void *value)
+{
+    if (value == NULL)
+    {
+        return 0;
+    }
+    
+    switch (reg_type)
+    {
+        case 0: /* 线圈D */
+            if (index >= D_COIL_SIZE)
+            {
+                return 0;
+            }
+            *((uint16_t *)value) = g_tVar.D[index];
+            break;
+            
+        case 1: /* 输入状态T */
+            if (index >= T_INPUT_SIZE)
+            {
+                return 0;
+            }
+            *((uint8_t *)value) = g_tVar.T[index];
+            break;
+            
+        case 2: /* 保持寄存器P */
+            if (index >= P_REG_SIZE)
+            {
+                return 0;
+            }
+            *((uint16_t *)value) = g_tVar.P[index];
+            break;
+            
+        case 3: /* 输入寄存器A */
+            if (index >= A_REG_SIZE)
+            {
+                return 0;
+            }
+            *((uint16_t *)value) = g_tVar.A[index];
+            break;
+            
+        default:
+            return 0;
+    }
+    
+    return 1;
+}
+
+/**
+ * @brief 通用寄存器写入函数
+ * @param reg_type 寄存器类型：0=线圈(D)，1=输入状态(T)，2=保持寄存器(P)，3=输入寄存器(A)
+ * @param index 寄存器索引（从0开始）
+ * @param value 要写入的值
+ * @return 0=失败，1=成功
+ */
+uint8_t MODS_WriteRegister(uint8_t reg_type, uint16_t index, uint16_t value)
+{
+    switch (reg_type)
+    {
+        case 0: /* 线圈D */
+            if (index >= D_COIL_SIZE)
+            {
+                return 0;
+            }
+            g_tVar.D[index] = value;
+            break;
+            
+        case 1: /* 输入状态T */
+            if (index >= T_INPUT_SIZE)
+            {
+                return 0;
+            }
+            g_tVar.T[index] = (uint8_t)value;
+            break;
+            
+        case 2: /* 保持寄存器P */
+            if (index >= P_REG_SIZE)
+            {
+                return 0;
+            }
+            g_tVar.P[index] = value;
+            break;
+            
+        case 3: /* 输入寄存器A */
+            if (index >= A_REG_SIZE)
+            {
+                return 0;
+            }
+            g_tVar.A[index] = value;
+            break;
+            
+        default:
+            return 0;
+    }
+    
+    return 1;
+}

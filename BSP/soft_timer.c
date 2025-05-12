@@ -19,6 +19,7 @@ typedef struct {
     void (*callback)(void*); /* 回调函数 */
     void* param;             /* 回调函数参数 */
     uint8_t active;          /* 定时器是否激活 */
+    uint32_t user_data;      /* 用户自定义数据，可用于任务间通信 */
 } SoftTimer_t;
 
 /* 软件定时器池 */
@@ -64,11 +65,11 @@ uint8_t SoftTimer_Create(uint32_t interval, uint32_t repeat, void (*callback)(vo
         if (timer_pool[i].active == 0) {
             timer_pool[i].interval = interval;
             timer_pool[i].elapsed = 0;
-            timer_pool[i].repeat_count = repeat;
-            timer_pool[i].executed_count = 0;
+            timer_pool[i].repeat_count = repeat;            timer_pool[i].executed_count = 0;
             timer_pool[i].callback = callback;
             timer_pool[i].param = param;
             timer_pool[i].active = 1;
+            timer_pool[i].user_data = 0;  /* 初始化用户数据为0 */
             
             return i;
         }
@@ -175,4 +176,38 @@ void SoftTimer_DeleteAll(void)
     for (i = 0; i < MAX_SOFT_TIMERS; i++) {
         timer_pool[i].active = 0;
     }
+}
+
+/**
+ * @brief 设置定时器的用户数据
+ * @param timer_id 定时器ID
+ * @param user_data 用户数据
+ * @return 成功返回1，失败返回0
+ */
+uint8_t SoftTimer_SetUserData(uint8_t timer_id, uint32_t user_data)
+{
+    if (timer_id >= MAX_SOFT_TIMERS || timer_pool[timer_id].active == 0) {
+        return 0;
+    }
+    
+    timer_pool[timer_id].user_data = user_data;
+    return 1;
+}
+
+/**
+ * @brief 获取定时器的用户数据
+ * @param timer_id 定时器ID
+ * @param user_data 用于存储用户数据的指针
+ * @return 成功返回1，失败返回0
+ */
+uint8_t SoftTimer_GetUserData(uint8_t timer_id, uint32_t* user_data)
+{
+    if (timer_id >= MAX_SOFT_TIMERS || timer_pool[timer_id].active == 0 || user_data == NULL) {
+        return 0;
+    }
+    
+    *user_data = timer_pool[timer_id].user_data;
+    // 设置为0
+    timer_pool[timer_id].user_data = 0;
+    return 1;
 }

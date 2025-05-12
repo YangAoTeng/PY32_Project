@@ -154,7 +154,7 @@ int main(void)
   /* 初始化软件定时器 */
   SoftTimer_Init();
   /* 初始化EEPROM */
-  EEPROM_Init();
+  // EEPROM_Init();
   // /* 初始化AT命令处理模块 */
   // AT_Init();
 
@@ -168,7 +168,9 @@ int main(void)
 
   /* 创建LED闪烁定时器(无限循环) */
   uint8_t timer1 = SoftTimer_Create(1000, 0, LED_Toggle_Callback, NULL);
-  // printf("LED toggle timer created, ID: %d\r\n", timer1);
+  printf("LED toggle timer created, ID: %d\r\n", timer1);
+
+  SoftTimer_SetUserData(timer1, 12345);
   
   // /* 创建UART处理定时器，10ms周期执行 */
   // uint8_t timer2 = SoftTimer_Create(10, 0, UART_Process_Task, NULL);
@@ -197,6 +199,9 @@ void LED_Toggle_Callback(void *param)
 {
   // printf("LED Toggle Callback\r\n");MODS_Poll
   HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+  uint32_t task_data;
+  SoftTimer_GetUserData(0, &task_data);
+  printf("Task data: %d\r\n", task_data);
   // 打印TIM3->CNT的值
   // printf("TIM3->CNT: %d\r\n", TIM3->CNT);
 }

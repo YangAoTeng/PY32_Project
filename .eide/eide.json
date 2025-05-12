@@ -34,12 +34,6 @@
               },
               {
                 "path": "Src/py32f0xx_it.c"
-              },
-              {
-                "path": "Src/bsp_24c02.c"
-              },
-              {
-                "path": "Src/bsp_i2c.c"
               }
             ],
             "folders": []
@@ -62,13 +56,10 @@
             "path": "BSP/bsp_at.c"
           },
           {
-            "path": "BSP/bsp_at.h"
+            "path": "BSP/hardware_timr.c"
           },
           {
             "path": "BSP/modbus_slave.c"
-          },
-          {
-            "path": "BSP/hardware_timr.c"
           },
           {
             "path": "BSP/msg_fifo.c"
@@ -198,9 +189,7 @@
   "targets": {
     "Project": {
       "excludeList": [
-        "<virtual_root>/BSP/py32f030xx_Start_Kit",
-        "<virtual_root>/BSP/OLED_Function.c",
-        "<virtual_root>/BSP/bsp_oled.c"
+        "<virtual_root>/BSP/py32f030xx_Start_Kit"
       ],
       "toolchain": "AC5",
       "compileConfig": {
@@ -321,8 +310,8 @@
         "bin": "",
         "baseAddr": "",
         "cpuInfo": {
-          "vendor": "PY32F002A",
-          "cpuName": "PY32F002AF15P6"
+          "vendor": "PY32",
+          "cpuName": "PY32F030"
         },
         "proType": 1,
         "speed": 8000,

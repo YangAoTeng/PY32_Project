@@ -67,4 +67,20 @@ void SoftTimer_ResetAll(void);
  */
 void SoftTimer_DeleteAll(void);
 
+/**
+ * @brief 设置定时器的用户数据
+ * @param timer_id 定时器ID
+ * @param user_data 用户数据
+ * @return 成功返回1，失败返回0
+ */
+uint8_t SoftTimer_SetUserData(uint8_t timer_id, uint32_t user_data);
+
+/**
+ * @brief 获取定时器的用户数据
+ * @param timer_id 定时器ID
+ * @param user_data 用于存储用户数据的指针
+ * @return 成功返回1，失败返回0
+ */
+uint8_t SoftTimer_GetUserData(uint8_t timer_id, uint32_t* user_data);
+
 #endif /* __SOFT_TIMER_H */

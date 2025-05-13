@@ -42,6 +42,13 @@ extern "C" {
 // #include "py32f030xx_Start_Kit.h"
 
 /* Private includes ----------------------------------------------------------*/
+
+typedef struct{
+  uint8_t init;       // 初始化标志
+  uint8_t baud;       // 波特率
+  uint8_t modbusId;   // Modbus ID
+}SystemParam_t;
+
 /* Private defines -----------------------------------------------------------*/
 /* Exported variables prototypes ---------------------------------------------*/
 /* Exported functions prototypes ---------------------------------------------*/

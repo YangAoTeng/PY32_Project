@@ -6,6 +6,6 @@
 
 extern UART_HandleTypeDef huart1;
 
-void bsp_usart1_init(void);
+void bsp_usart1_init(uint8_t baud_idx);
 extern RingBuffer_t uart_rx_ring_buffer;
 #endif // !__BSP_USART_H

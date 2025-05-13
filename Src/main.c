@@ -137,13 +137,21 @@ void HardTimer_Callback(void *param)
     // HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
 }
 
-typedef struct{
-  uint8_t baud;       // 波特率
-  uint8_t modbusId;   // Modbus ID
-}SystemParam_t;
+
 
 SystemParam_t g_tSysParam = {0}; // 系统参数结构体
-SystemParam_t g_tSysParamBak = {0}; // 系统参数备份结构体
+
+void SystemParam_Init(void)
+{
+  BSP_Flash_Read((uint8_t *)&g_tSysParam, sizeof(SystemParam_t)); // 读取Flash
+  if (g_tSysParam.init != 0x11)
+  {
+    g_tSysParam.init = 0x11; // 设置初始化标志
+    g_tSysParam.baud = 6; // 设置默认波特率
+    g_tSysParam.modbusId = 1; // 设置默认Modbus ID
+    BSP_Flash_Write((uint8_t *)&g_tSysParam, sizeof(SystemParam_t)); // 写入Flash
+  }
+}
 
 /**
   * @brief  Main program.
@@ -154,11 +162,13 @@ int main(void)
   /* Reset of all peripherals, Initializes the Systick */
   HAL_Init();                                  
   APP_SystemClockConfig(); /* Configure the system clock */
-  
+  SystemParam_Init(); // 初始化系统参数
+
+
   /* Initialize GPIO */
   APP_GpioConfig();
   /* Initialize UART1 */
-  bsp_usart1_init();
+  bsp_usart1_init(g_tSysParam.baud);
   
   /* 初始化软件定时器 */
   SoftTimer_Init();
@@ -166,15 +176,8 @@ int main(void)
   // EEPROM_Init();
   // /* 初始化AT命令处理模块 */
   // AT_Init();
-  g_tSysParam.baud = 1000; // 设置波特率
-  g_tSysParam.modbusId = 1; // 设置Modbus ID
-
-  // 
-  BSP_Flash_Write((uint8_t *)&g_tSysParam, sizeof(SystemParam_t)); // 写入Flash
-  BSP_Flash_Read((uint8_t *)&g_tSysParamBak, sizeof(SystemParam_t)); // 读取Flash
-  printf("SystemParamBak: %d\r\n", g_tSysParamBak.baud);
-  printf("SystemParamBak: %d\r\n", g_tSysParamBak.modbusId);
-
+  printf("SystemParam Read: %d\r\n", g_tSysParam.baud);
+  printf("SystemParam Read: %d\r\n", g_tSysParam.modbusId);
 
 
 
@@ -232,6 +235,19 @@ void LED_Toggle_Callback(void *param)
           HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET); /* Set LED to high */
       }
 
+  }else if (g_tMsg.MsgCode == MSG_MODS_06H)
+  {
+    // 读取保持寄存器的值
+    MODS_ReadRegister(2, g_tMsg.MsgParam, &led);
+    if (g_tMsg.MsgParam == 30)
+    {
+      g_tSysParam.baud = led; // 设置波特率
+      BSP_Flash_Write((uint8_t *)&g_tSysParam, sizeof(SystemParam_t)); // 写入Flash
+    }else if (g_tMsg.MsgParam == 31)
+    {
+      g_tSysParam.modbusId = led; // 设置Modbus ID
+      BSP_Flash_Write((uint8_t *)&g_tSysParam, sizeof(SystemParam_t)); // 写入Flash
+    }
   }
   else
   {

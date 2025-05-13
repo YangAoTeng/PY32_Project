@@ -165,7 +165,7 @@ MSG_FIFO_T g_tModS_Fifo;
 void MODS_Init(void)
 {
 	/* 初始化MODBUS从机数据结构体 */
-	g_tModS.Addr = 01;
+	g_tModS.Addr = g_tSysParam.modbusId;	
 	g_tModS.RxCount = 0;
 	g_tModS.RxStatus = 0;
 	g_tModS.RxNewFlag = 0;
@@ -173,6 +173,11 @@ void MODS_Init(void)
 
 	/* 初始化变量数据结构体 */
 	memset((void *)&g_tVar, 0, sizeof(VAR_T));
+
+	g_tVar.P[30] = g_tSysParam.baud;	/* 波特率 */
+	g_tVar.P[31] =g_tSysParam.modbusId;	/* Modbus ID */
+
+
 
 	/* 初始化消息FIFO */
 	bsp_InitMsg(&g_tModS_Fifo);
@@ -244,7 +249,7 @@ void MODS_ReciveNew(uint8_t _byte)
 	/* 根据波特率，获取需要延迟的时间 */
 	for(i = 0; i < (sizeof(ModbusBaudRate)/sizeof(ModbusBaudRate[0])); i++)
 	{
-		if(SBAUD485 == ModbusBaudRate[i].Bps)
+		if(ModbusBaudRate[g_tSysParam.baud-1].Bps == ModbusBaudRate[i].Bps)
 		{
 			break;
 		}	
@@ -1019,7 +1024,7 @@ static void MODS_06H(void)
 
 	if (MODS_WriteRegValue(reg, value) == 1)	/* 该函数会把写入的值存入寄存器 */
 	{
-		;
+		bsp_PutMsg(&g_tModS_Fifo, MSG_MODS_06H, reg);	/* 发送消息到主程序 */
 	}
 	else
 	{

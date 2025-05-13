@@ -13,10 +13,53 @@ uint8_t uart_rx_buffer_data[UART_RX_BUFFER_SIZE];
 
 /**
  * @brief           usart1 初始化  PF0 RX  PF1 TX
- * 
+ * @param  baud_idx: 波特率选择
+ *                  1: 2400
+ *                  2: 4800
+ *                  3: 9600
+ *                  4: 19200
+ *                  5: 38400
+ *                  6: 115200
+ *                  7: 128000
+ *                  8: 230400
+ *                  其他值: 默认115200
  */
-void bsp_usart1_init(void)
+void bsp_usart1_init(uint8_t baud_idx)
 {
+    uint32_t baudrate;
+    
+    /* 根据参数选择波特率 */
+    switch(baud_idx)
+    {
+        case 1:
+            baudrate = 2400;
+            break;
+        case 2:
+            baudrate = 4800;
+            break;
+        case 3:
+            baudrate = 9600;
+            break;
+        case 4:
+            baudrate = 19200;
+            break;
+        case 5:
+            baudrate = 38400;
+            break;
+        case 6:
+            baudrate = 115200;
+            break;
+        case 7:
+            baudrate = 128000;
+            break;
+        case 8:
+            baudrate = 230400;
+            break;
+        default:
+            baudrate = 115200;  /* 默认波特率 */
+            break;
+    }
+    
     __HAL_RCC_USART1_CLK_ENABLE();
     __HAL_RCC_GPIOF_CLK_ENABLE();
 
@@ -40,7 +83,7 @@ void bsp_usart1_init(void)
     HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
 
     huart1.Instance = USART1;
-    huart1.Init.BaudRate = 115200;
+    huart1.Init.BaudRate = baudrate;  /* 使用选择的波特率 */
     huart1.Init.WordLength = UART_WORDLENGTH_8B;
     huart1.Init.StopBits = UART_STOPBITS_1;
     huart1.Init.Parity = UART_PARITY_NONE;

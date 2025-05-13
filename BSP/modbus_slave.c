@@ -1,4 +1,3 @@
-
 #include "modbus_slave.h"
 #include "hardware_timr.h"
 #include "string.h"
@@ -23,6 +22,7 @@ static void MODS_03H(void);
 static void MODS_04H(void);
 static void MODS_05H(void);
 static void MODS_06H(void);
+static void MODS_0FH(void); /* 添加写多个线圈的函数声明 */
 static void MODS_10H(void);
 
 static uint8_t MODS_ReadRegValue(uint16_t reg_addr, uint8_t *reg_value);
@@ -378,6 +378,12 @@ static void MODS_AnalyzeApp(void)
 			MODS_06H();	
 			break;
 			
+		case 0x0F:							/* 写多个线圈 */
+			MODS_0FH();
+			// bsp_PutMsg(&g_tModS_Fifo, MSG_MODS_0FH, 0);	/* 发送消息到主程序 */
+			bsp_PutMsg(&g_tModS_Fifo, MSG_MODS_05H, 0);	/* 发送消息到主程序 */
+			break;
+			
 		case 0x10:							/* 写多个保存寄存器（此例程存在g_tVar中的参数）*/
 			MODS_10H();
 			break;
@@ -689,7 +695,7 @@ static void MODS_03H(void)
 			00 数据3高字节(006DH)
 			00 数据3低字节(006DH)
 			38 CRC高字节
-			B9 CRC低字节
+			B9 CRC校验低字节
 
 		例子:
 			01 03 30 06 00 01  6B0B      ---- 读 3006H, 触发电流
@@ -789,7 +795,7 @@ static void MODS_04H(void)
 			00 寄存器个数高字节
 			02 寄存器个数低字节
 			F2 CRC高字节
-			99 CRC低字节
+			99 CRC校验低字节
 
 		从机应答:  输入寄存器长度为2个字节。对于单个输入寄存器而言，寄存器高字节数据先被传输，
 				低字节数据后被传输。输入寄存器之间，低地址寄存器先被传输，高地址寄存器后被传输。
@@ -1247,4 +1253,116 @@ uint8_t MODS_WriteRegister(uint8_t reg_type, uint16_t index, uint16_t value)
     }
     
     return 1;
+}
+
+/*
+*********************************************************************************************************
+*	函 数 名: MODS_0FH
+*	功能说明: 写多个线圈（对应多个D值）
+*	形    参: 无
+*	返 回 值: 无
+*********************************************************************************************************
+*/
+static void MODS_0FH(void)
+{
+	/*
+		主机发送: 
+			从机地址           0x01
+			功能码             0x0F
+			起始地址高字节     0x00
+			起始地址低字节     0x13
+			线圈数量高字节     0x00
+			线圈数量低字节     0x0A (10个线圈)
+			字节数             0x02 (2个字节)
+			数据1              0xCD (1100 1101)
+			数据2              0x01 (0000 0001)
+			CRC校验低字节
+			CRC校验高字节
+
+		从机应答:
+			从机地址           0x01
+			功能码             0x0F
+			起始地址高字节     0x00
+			起始地址低字节     0x13
+			线圈数量高字节     0x00
+			线圈数量低字节     0x0A
+			CRC校验低字节
+			CRC校验高字节
+	*/
+	uint16_t reg_addr;
+	uint16_t coil_num;
+	uint8_t byte_num;
+	uint8_t i, j;
+	uint8_t bit_val;
+	
+	g_tModS.RspCode = RSP_OK;
+	
+	/* 第1步：判断接收的数据是否完整 */
+	if (g_tModS.RxCount < 9) /* 最少9个字节：地址(1) + 功能码(1) + 起始地址(2) + 线圈数量(2) + 字节数(1) + 至少1个数据字节 + CRC(2) */
+	{
+		g_tModS.RspCode = RSP_ERR_VALUE;
+		goto err_ret;
+	}
+	
+	/* 第2步：解析数据 */
+	reg_addr = BEBufToUint16(&g_tModS.RxBuf[2]); /* 起始地址 */
+	coil_num = BEBufToUint16(&g_tModS.RxBuf[4]); /* 线圈数量 */
+	byte_num = g_tModS.RxBuf[6];                 /* 后面的数据体字节数 */
+
+	/* 判断寄存器个数和后面数据字节数是否一致 */
+	if (byte_num != (coil_num + 7) / 8) 
+	{
+		g_tModS.RspCode = RSP_ERR_VALUE;
+		goto err_ret;
+	}
+	
+	/* 确保接收到足够的数据 */
+	if (g_tModS.RxCount < (7 + byte_num + 2)) /* 7(基本帧) + 字节数 + 2(CRC) */
+	{
+		g_tModS.RspCode = RSP_ERR_VALUE;
+		goto err_ret;
+	}
+	
+	/* 判断寄存器地址和数量是否在范围内 */
+	if (reg_addr < REG_D_START || reg_addr + coil_num - 1 > REG_D_END)
+	{
+		g_tModS.RspCode = RSP_ERR_REG_ADDR;
+		goto err_ret;
+	}
+	
+	/* 第3步：处理数据，设置线圈 */
+	for (i = 0; i < coil_num; i++)
+	{
+		j = i / 8;                             /* 字节索引 */
+		bit_val = (g_tModS.RxBuf[7 + j] >> (i % 8)) & 0x01; /* 取出位值 */
+		
+		if (bit_val == 1)
+		{
+			g_tVar.D[reg_addr + i - REG_D_START] = 0xFF00; /* 线圈打开 */
+		}
+		else
+		{
+			g_tVar.D[reg_addr + i - REG_D_START] = 0x0000; /* 线圈关闭 */
+		}
+	}
+
+err_ret:
+	/* 第4步：发送应答 */
+	if (g_tModS.RspCode == RSP_OK)
+	{
+		/* 发送正确的应答 */
+		g_tModS.TxCount = 0;
+		g_tModS.TxBuf[g_tModS.TxCount++] = g_tModS.RxBuf[0];      /* 从机地址 */
+		g_tModS.TxBuf[g_tModS.TxCount++] = g_tModS.RxBuf[1];      /* 功能码 */
+		g_tModS.TxBuf[g_tModS.TxCount++] = g_tModS.RxBuf[2];      /* 起始地址高字节 */
+		g_tModS.TxBuf[g_tModS.TxCount++] = g_tModS.RxBuf[3];      /* 起始地址低字节 */
+		g_tModS.TxBuf[g_tModS.TxCount++] = g_tModS.RxBuf[4];      /* 线圈数量高字节 */
+		g_tModS.TxBuf[g_tModS.TxCount++] = g_tModS.RxBuf[5];      /* 线圈数量低字节 */
+		
+		MODS_SendWithCRC(g_tModS.TxBuf, g_tModS.TxCount);
+	}
+	else
+	{
+		MODS_SendAckErr(g_tModS.RspCode);      /* 发送错误应答 */
+	}
 }

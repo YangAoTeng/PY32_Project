@@ -165,6 +165,7 @@ MSG_FIFO_T g_tModS_Fifo;
 void MODS_Init(void)
 {
 	/* 初始化MODBUS从机数据结构体 */
+	g_tModS.Addr = 01;
 	g_tModS.RxCount = 0;
 	g_tModS.RxStatus = 0;
 	g_tModS.RxNewFlag = 0;
@@ -193,7 +194,6 @@ void MODS_Poll(void)
 	/* 超过3.5个字符时间后执行MODH_RxTimeOut()函数。全局变量 g_rtu_timeout = 1; 通知主程序开始解码 */
 	if (g_mods_timeout == 0)	
 	{
-		// printf("MODS_Poll: %d\r\n", g_tModS.RxCount);
 		return;								/* 没有超时，继续接收。不要清零 g_tModS.RxCount */
 	}
 	
@@ -208,21 +208,18 @@ void MODS_Poll(void)
 	crc1 = CRC16_Modbus(g_tModS.RxBuf, g_tModS.RxCount);
 	if (crc1 != 0)
 	{
-		// printf("CRC Error\r\n");
 		goto err_ret;
 	}
 
 	/* 站地址 (1字节） */
 	addr = g_tModS.RxBuf[0];				/* 第1字节 站号 */
-	if (addr != SADDR485)		 			/* 判断主机发送的命令地址是否符合 */
+	if (addr != g_tModS.Addr)		 			/* 判断主机发送的命令地址是否符合 */
 	{
-		// printf("Addr Error\r\n");
 		goto err_ret;
 	}
 
 	/* 分析应用层协议 */
 	MODS_AnalyzeApp();						
-	// printf("MODS_Poll Error\r\n");
 err_ret:
 	g_tModS.RxCount = 0;					/* 必须清零计数器，方便下次帧同步 */
 }

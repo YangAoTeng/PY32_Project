@@ -10,7 +10,7 @@
 	03 读取保持寄存器（可以当作输入）			06 写单个保持寄存器（）   10 写多个保持寄存器
 	04 读取输入寄存器（模拟信号）
 */
-#define SADDR485	1
+#define SADDR485	01
 #define SBAUD485	115200
 
 /* 01H 读强制单线圈 */
@@ -49,6 +49,8 @@
 
 typedef struct
 {
+	uint8_t Addr;		
+	
 	uint8_t RxBuf[S_RX_BUF_SIZE];
 	uint8_t RxCount;
 	uint8_t RxStatus;

@@ -144,9 +144,9 @@ SystemParam_t g_tSysParam = {0}; // 系统参数结构体
 void SystemParam_Init(void)
 {
   BSP_Flash_Read((uint8_t *)&g_tSysParam, sizeof(SystemParam_t)); // 读取Flash
-  if (g_tSysParam.init != 0x11)
+  if (g_tSysParam.init != 0x10)
   {
-    g_tSysParam.init = 0x11; // 设置初始化标志
+    g_tSysParam.init = 0x10; // 设置初始化标志
     g_tSysParam.baud = 6; // 设置默认波特率
     g_tSysParam.modbusId = 1; // 设置默认Modbus ID
     BSP_Flash_Write((uint8_t *)&g_tSysParam, sizeof(SystemParam_t)); // 写入Flash
@@ -234,7 +234,6 @@ void LED_Toggle_Callback(void *param)
       {
           HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET); /* Set LED to high */
       }
-
   }else if (g_tMsg.MsgCode == MSG_MODS_06H)
   {
     // 读取保持寄存器的值
@@ -242,16 +241,22 @@ void LED_Toggle_Callback(void *param)
     if (g_tMsg.MsgParam == 30)
     {
       g_tSysParam.baud = led; // 设置波特率
-      BSP_Flash_Write((uint8_t *)&g_tSysParam, sizeof(SystemParam_t)); // 写入Flash
+      if (led > 0 && led < 9)
+      {
+        BSP_Flash_Write((uint8_t *)&g_tSysParam, sizeof(SystemParam_t)); // 写入Flash
+      }
     }else if (g_tMsg.MsgParam == 31)
     {
       g_tSysParam.modbusId = led; // 设置Modbus ID
-      BSP_Flash_Write((uint8_t *)&g_tSysParam, sizeof(SystemParam_t)); // 写入Flash
+      if (led > 0 && led < 256)
+      {
+        BSP_Flash_Write((uint8_t *)&g_tSysParam, sizeof(SystemParam_t)); // 写入Flash
+      }
     }
   }
   else
   {
-      // printf("No MODBUS_MSG\r\n");
+
   }
 }
 

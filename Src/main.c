@@ -38,6 +38,8 @@
 #include "modbus_slave.h" /* 添加Modbus从站头文件 */
 #include "msg_fifo.h" /* 添加消息FIFO头文件 */
 #include "bsp_flash.h" /* 添加Flash操作头文件 */
+#include "74HC595.h" /* 添加74HC595头文件 */
+#include "74HC165.h" /* 添加74HC165头文件 */
 
 /* Private define ------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
@@ -187,7 +189,7 @@ int main(void)
 
 
   /* 创建LED闪烁定时器(无限循环) */
-  uint8_t timer1 = SoftTimer_Create(100, 0, LED_Toggle_Callback, NULL);
+  uint8_t timer1 = SoftTimer_Create(1000, 0, LED_Toggle_Callback, NULL);
   printf("LED toggle timer created, ID: %d\r\n", timer1);
 
   SoftTimer_SetUserData(timer1, 12345);
@@ -197,16 +199,22 @@ int main(void)
   // printf("UART process timer created, ID: %d\r\n", timer2);
   
   // /* 创建IO状态读取定时器，10ms周期执行 */
-  uint8_t timer3 = SoftTimer_Create(100, 0, IO_Status_Read_Task, NULL);
-  printf("IO status read timer created, ID: %d\r\n", timer3);
+  // uint8_t timer3 = SoftTimer_Create(100, 0, IO_Status_Read_Task, NULL);
+  // printf("IO status read timer created, ID: %d\r\n", timer3);
   bsp_InitHardTimer();
-  MODS_Init();
+  
+  HC595_Init();
+  HC595_Send24Bits(0xFFFFFF);
+
+  HC165_Init();
+
+  // MODS_Init();
   // bsp_StartHardTimer(1, 65535, HardTimer_Callback);
   while (1)
   {
       /* 执行软件定时器 */
       SoftTimer_Execute();
-      MODS_Poll();
+      // MODS_Poll();
   }
 }
 
@@ -218,46 +226,52 @@ int main(void)
   */
 void LED_Toggle_Callback(void *param)
 {
-  uint16_t led = 0;
-  if (bsp_GetMsg(&g_tModS_Fifo, &g_tMsg) == 0)
-  {
-    return; /* 没有消息 */
-  }
-  if (g_tMsg.MsgCode == MSG_MODS_05H)
-  {
-      MODS_ReadRegister(0, 0, &led); /* 读取线圈状态 */
-      if (led == 0xFF00)
-      {
-          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET); /* Set LED to low */
-      }
-      else
-      {
-          HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET); /* Set LED to high */
-      }
-  }else if (g_tMsg.MsgCode == MSG_MODS_06H)
-  {
-    // 读取保持寄存器的值
-    MODS_ReadRegister(2, g_tMsg.MsgParam, &led);
-    if (g_tMsg.MsgParam == 30)
-    {
-      g_tSysParam.baud = led; // 设置波特率
-      if (led > 0 && led < 9)
-      {
-        BSP_Flash_Write((uint8_t *)&g_tSysParam, sizeof(SystemParam_t)); // 写入Flash
-      }
-    }else if (g_tMsg.MsgParam == 31)
-    {
-      g_tSysParam.modbusId = led; // 设置Modbus ID
-      if (led > 0 && led < 256)
-      {
-        BSP_Flash_Write((uint8_t *)&g_tSysParam, sizeof(SystemParam_t)); // 写入Flash
-      }
-    }
-  }
-  else
-  {
+  
+  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6); /* Toggle LED on PB6 */
+  uint16_t data = 0;
+  data = HC165_Read16Bits();
+  printf("Read data: %04X\r\n", data);
 
-  }
+  // uint16_t led = 0;
+  // if (bsp_GetMsg(&g_tModS_Fifo, &g_tMsg) == 0)
+  // {
+  //   return; /* 没有消息 */
+  // }
+  // if (g_tMsg.MsgCode == MSG_MODS_05H)
+  // {
+  //     MODS_ReadRegister(0, 0, &led); /* 读取线圈状态 */
+  //     if (led == 0xFF00)
+  //     {
+  //         HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET); /* Set LED to low */
+  //     }
+  //     else
+  //     {
+  //         HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET); /* Set LED to high */
+  //     }
+  // }else if (g_tMsg.MsgCode == MSG_MODS_06H)
+  // {
+  //   // 读取保持寄存器的值
+  //   MODS_ReadRegister(2, g_tMsg.MsgParam, &led);
+  //   if (g_tMsg.MsgParam == 30)
+  //   {
+  //     g_tSysParam.baud = led; // 设置波特率
+  //     if (led > 0 && led < 9)
+  //     {
+  //       BSP_Flash_Write((uint8_t *)&g_tSysParam, sizeof(SystemParam_t)); // 写入Flash
+  //     }
+  //   }else if (g_tMsg.MsgParam == 31)
+  //   {
+  //     g_tSysParam.modbusId = led; // 设置Modbus ID
+  //     if (led > 0 && led < 256)
+  //     {
+  //       BSP_Flash_Write((uint8_t *)&g_tSysParam, sizeof(SystemParam_t)); // 写入Flash
+  //     }
+  //   }
+  // }
+  // else
+  // {
+
+  // }
 }
 
 
@@ -275,19 +289,19 @@ static void APP_GpioConfig(void)
   // 启用GPIOB时钟
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
-  GPIO_InitStruct.Pin = GPIO_PIN_5;
+  GPIO_InitStruct.Pin = GPIO_PIN_6;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP; /* Push-pull output */
   GPIO_InitStruct.Pull = GPIO_NOPULL;        /* No pull-up or pull-down */
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW; /* Low speed */
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET); /* Set PA5 to high */
-  
-  /* 配置PB0, PB1, PB2为输入模式 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;     /* 输入模式 */
-  GPIO_InitStruct.Pull = GPIO_PULLUP;         /* 上拉电阻 */
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_6, GPIO_PIN_SET); /* Set PA5 to high */
+  
+  // /* 配置PB0, PB1, PB2为输入模式 */
+  // GPIO_InitStruct.Pin = GPIO_PIN_0 | GPIO_PIN_1 | GPIO_PIN_2;
+  // GPIO_InitStruct.Mode = GPIO_MODE_INPUT;     /* 输入模式 */
+  // GPIO_InitStruct.Pull = GPIO_PULLUP;         /* 上拉电阻 */
+  // GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  // HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 }
 
 

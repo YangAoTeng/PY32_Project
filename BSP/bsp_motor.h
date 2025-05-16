@@ -45,6 +45,7 @@ typedef struct StepperMotor {
     uint32_t min_step_delay;   // 最小步进延时(最大速度)
     uint32_t max_step_delay;   // 最大步进延时(启动速度)
     uint32_t accel_steps;      // 加速步数
+    uint32_t accel_count;      // 当前已执行的加速/减速步数
       // 时间控制
     uint64_t last_step_time;   // 上次步进时间
     uint8_t pulse_state;       // PWM脉冲状态

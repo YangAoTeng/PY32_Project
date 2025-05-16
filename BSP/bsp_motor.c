@@ -113,8 +113,10 @@ void Stepper_Move(StepperMotor_t* motor, uint32_t steps, StepperDirection_t dir)
     // 计算目标位置
     if (dir == STEPPER_DIR_CW) {
         motor->target_position = motor->position + steps;
+        printf("Motor moving CW to %d steps\r\n", motor->target_position);
     } else {
         motor->target_position = motor->position - steps;
+        printf("Motor moving CCW to %d steps\r\n", motor->target_position);
     }
     
     // 设置初始速度为启动速度
@@ -202,167 +204,145 @@ void Stepper_Enable(StepperMotor_t* motor, uint8_t enable)
  */
 void Stepper_Handler(StepperMotor_t* motor)
 {
-    uint64_t current_time = g_motor_system_time; // 获取当前系统时间
+    // 快速检查 - 如果电机空闲，直接返回
+    if (motor->state == STEPPER_STATE_IDLE) {
+        return;
+    }
     
-    // 处理脉冲信号
-    if (motor->state != STEPPER_STATE_IDLE) {
-        // 检查限位开关状态
-        if (motor->limit_enabled) {
-            // 检查当前方向的限位开关是否触发
-            if ((motor->dir == STEPPER_DIR_CW && motor->cw_limit) ||
-                (motor->dir == STEPPER_DIR_CCW && motor->ccw_limit)) {
-                // 限位开关触发，立即停止
-                motor->state = STEPPER_STATE_IDLE;
-                
-                // 如果是反转方向触发限位开关，并且是回归零点操作，则重置位置为0
-                if (motor->dir == STEPPER_DIR_CCW && motor->ccw_limit) {
-                    motor->position = 0;
-                    motor->target_position = 0;
-                }
-                
-                return;
-            }
-        }
+    uint64_t current_time = g_motor_system_time; // 获取当前系统时间
+    uint32_t time_diff = current_time - motor->last_step_time;
+    uint32_t half_period = motor->step_delay >> 1; // 位移操作代替除法
+    
+    // 如果时间差小于半周期，无需处理
+    if (time_diff < half_period) {
+        return;
+    }
+    
+    // 检查限位开关状态 - 只在需要时检查
+    if (motor->limit_enabled) {
+        uint8_t limit_triggered = (motor->dir == STEPPER_DIR_CW) ? 
+                                motor->cw_limit : motor->ccw_limit;
         
-        // 计算半个周期的时间（50%占空比）
-        uint32_t half_period = motor->step_delay / 2;
-        
-        // 检查是否需要切换脉冲状态
-        if (current_time - motor->last_step_time >= half_period) {
-            motor->last_step_time = current_time;
+        if (limit_triggered) {
+            motor->state = STEPPER_STATE_IDLE;
             
-            // 切换脉冲状态
-            if (motor->pulse_state == 0) {
-                // 从低电平切换到高电平（脉冲开始）
-                if (motor->PinControl != NULL) {
-                    motor->PinControl(PIN_TYPE_PWM, 1);  // PWM引脚高电平
-                }
-                motor->pulse_state = 1;
-            } else {
-                // 从高电平切换到低电平（脉冲结束，完成一个步进）
-                if (motor->PinControl != NULL) {
-                    motor->PinControl(PIN_TYPE_PWM, 0);  // PWM引脚低电平
-                }
-                motor->pulse_state = 0;
-                
-                // 更新位置
-                if (motor->dir == STEPPER_DIR_CW) {
-                    motor->position++;
-                } else {
-                    motor->position--;
-                }
-                
-                // 检查是否达到目标位置
-                if ((motor->dir == STEPPER_DIR_CW && motor->position >= motor->target_position) ||
-                    (motor->dir == STEPPER_DIR_CCW && motor->position <= motor->target_position)) {
-                    // 达到目标位置，停止
-                    motor->state = STEPPER_STATE_IDLE;
-                    return;
-                }
-                
-                // 根据当前状态计算下一步的延时(为整个周期的延时)
-                uint32_t next_delay = motor->step_delay; // 默认保持当前延时
-                
-                switch (motor->state) {
-                    case STEPPER_STATE_ACCELERATING:
-                    {
-                        // 计算已经走过的加速距离（从加速开始算起）
-                        static uint32_t accel_steps_taken = 0;
-                        
-                        // 每完成一步加速计数增加
-                        accel_steps_taken++;
-                        
-                        // 计算剩余距离 - 用于判断是否需要提前进入减速阶段
-                        uint32_t remain_distance;
-                        if (motor->dir == STEPPER_DIR_CW) {
-                            remain_distance = motor->target_position - motor->position;
-                        } else {
-                            remain_distance = motor->position - motor->target_position;
-                        }
-                        // 更新加速阶段的延迟
-                        if (accel_steps_taken < motor->accel_steps) {
-                            // 仍在加速
-                            next_delay = motor->max_step_delay - 
-                                ((motor->max_step_delay - motor->min_step_delay) * accel_steps_taken) / motor->accel_steps;
-                                
-                            // 确保延时不小于最小延时
-                            if (next_delay < motor->min_step_delay) {
-                                next_delay = motor->min_step_delay;
-                            }
-                            
-                            // 检查是否需要提前进入减速阶段（剩余距离小于等于加速步数）
-                            if (remain_distance <= motor->accel_steps) {
-                                motor->state = STEPPER_STATE_DECELERATING;
-                                accel_steps_taken = 0; // 重置加速步数计数
-                            }
-                        } else {
-                            // 加速完成，进入匀速阶段
-                            next_delay = motor->min_step_delay;
-                            motor->state = STEPPER_STATE_RUNNING;
-                            accel_steps_taken = 0; // 重置加速步数计数
-                            
-                            // 检查是否需要立即开始减速
-                            if (remain_distance <= motor->accel_steps) {
-                                motor->state = STEPPER_STATE_DECELERATING;
-                            }
-                        }
-                        break;
-                    }
-                    
-                    case STEPPER_STATE_RUNNING:
-                    {
-                        // 匀速运动，检查是否需要开始减速
-                        next_delay = motor->min_step_delay; // 保持最大速度
-                        
-                        uint32_t remain_distance;
-                        if (motor->dir == STEPPER_DIR_CW) {
-                            remain_distance = motor->target_position - motor->position;
-                        } else {
-                            remain_distance = motor->position - motor->target_position;
-                        }
-                        
-                        if (remain_distance <= motor->accel_steps) {
-                            motor->state = STEPPER_STATE_DECELERATING;
-                        }
-                        break;
-                    }
-                    
-                    case STEPPER_STATE_DECELERATING:
-                    {
-                        // 计算剩余距离（用于减速）
-                        uint32_t decel_distance;
-                        if (motor->dir == STEPPER_DIR_CW) {
-                            decel_distance = motor->target_position - motor->position;
-                        } else {
-                            decel_distance = motor->position - motor->target_position;
-                        }
-                        
-                        // 更新减速阶段的延迟
-                        if (decel_distance > 0 && motor->accel_steps > 0) {
-                            next_delay = motor->min_step_delay + 
-                                ((motor->max_step_delay - motor->min_step_delay) * (motor->accel_steps - decel_distance)) / motor->accel_steps;
-                                
-                            // 确保延时不大于最大延时
-                            if (next_delay > motor->max_step_delay) {
-                                next_delay = motor->max_step_delay;
-                            }
-                        } else {
-                            // 减速完成，使用启动速度
-                            next_delay = motor->max_step_delay;
-                        }
-                        break;
-                    }
-                    
-                    default:
-                        // 保持当前延迟
-                        break;
-                }
-                
-                // 更新步进延时
-                motor->step_delay = next_delay;
+            // 如果是回归零点操作，重置位置
+            if (motor->dir == STEPPER_DIR_CCW && motor->ccw_limit) {
+                motor->position = 0;
+                motor->target_position = 0;
             }
+            return;
         }
     }
+    
+    // 更新脉冲时间
+    motor->last_step_time = current_time;
+    
+    // 处理脉冲状态
+    if (motor->pulse_state == 0) {
+        // 脉冲上升沿
+        if (motor->PinControl != NULL) {
+            motor->PinControl(PIN_TYPE_PWM, 1);
+        }
+        motor->pulse_state = 1;
+        return; // 直接返回，等待下半周期
+    }
+    
+    // 脉冲下降沿 - 完成一步
+    if (motor->PinControl != NULL) {
+        motor->PinControl(PIN_TYPE_PWM, 0);
+    }
+    motor->pulse_state = 0;
+    
+    // 更新位置 - 使用三目运算简化
+    motor->position += (motor->dir == STEPPER_DIR_CW) ? 1 : -1;
+    
+    // 检查是否达到目标位置
+    uint8_t reached_target = (motor->dir == STEPPER_DIR_CW) ? 
+                           (motor->position >= motor->target_position) : 
+                           (motor->position <= motor->target_position);
+    
+    if (reached_target) {
+        motor->state = STEPPER_STATE_IDLE;
+        return;
+    }
+    
+    // 计算下一步延时
+    uint32_t next_delay = motor->step_delay; // 默认保持当前延时
+    
+    // 计算剩余距离 - 只计算一次
+    uint32_t remain_distance = (motor->dir == STEPPER_DIR_CW) ? 
+                             (motor->target_position - motor->position) : 
+                             (motor->position - motor->target_position);
+    
+    // 根据状态更新速度
+    switch (motor->state) {
+        case STEPPER_STATE_ACCELERATING:
+        {
+            // 使用电机结构体存储加速步数，而不是静态变量
+            motor->accel_count++;
+            
+            if (motor->accel_count < motor->accel_steps) {
+                // 使用查表法或预计算的方式可以进一步优化
+                next_delay = motor->max_step_delay - 
+                    ((motor->max_step_delay - motor->min_step_delay) * motor->accel_count) / motor->accel_steps;
+                
+                // 确保不小于最小延时
+                if (next_delay < motor->min_step_delay) {
+                    next_delay = motor->min_step_delay;
+                }
+                
+                // 提前进入减速阶段
+                if (remain_distance <= motor->accel_steps) {
+                    motor->state = STEPPER_STATE_DECELERATING;
+                    motor->accel_count = 0;
+                }
+            } else {
+                // 加速完成
+                next_delay = motor->min_step_delay;
+                motor->state = STEPPER_STATE_RUNNING;
+                motor->accel_count = 0;
+                
+                // 检查是否需要立即减速
+                if (remain_distance <= motor->accel_steps) {
+                    motor->state = STEPPER_STATE_DECELERATING;
+                }
+            }
+            break;
+        }
+        
+        case STEPPER_STATE_RUNNING:
+            next_delay = motor->min_step_delay;
+            
+            if (remain_distance <= motor->accel_steps) {
+                motor->state = STEPPER_STATE_DECELERATING;
+            }
+            break;
+        
+        case STEPPER_STATE_DECELERATING:
+            if (remain_distance > 0 && motor->accel_steps > 0) {
+                // 优化减速计算
+                uint32_t decel_factor = (motor->accel_steps > remain_distance) ? 
+                                      (motor->accel_steps - remain_distance) : 0;
+                
+                next_delay = motor->min_step_delay + 
+                    ((motor->max_step_delay - motor->min_step_delay) * decel_factor) / motor->accel_steps;
+                
+                // 确保不大于最大延时
+                if (next_delay > motor->max_step_delay) {
+                    next_delay = motor->max_step_delay;
+                }
+            } else {
+                next_delay = motor->max_step_delay;
+            }
+            break;
+        
+        default:
+            break;
+    }
+    
+    // 更新步进延时
+    motor->step_delay = next_delay;
 }
 
 /**

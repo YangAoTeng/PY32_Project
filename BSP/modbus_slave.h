@@ -69,7 +69,7 @@ typedef struct
 	uint16_t P[P_REG_SIZE];    /* 支持最多32个保持寄存器 */
 
 	/* 04H 读取模拟量寄存器 */
-	uint16_t A[A_REG_SIZE];    /* 支持最多32个模拟量寄存器 */
+	int16_t A[A_REG_SIZE];    /* 支持最多32个模拟量寄存器 */
 
 	/* 01H 05H 读写单个强制线圈 */
 	uint16_t D[D_COIL_SIZE];    /* 支持最多32个线圈状态 */

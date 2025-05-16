@@ -50,6 +50,11 @@ void IO_Status_Read_Task(void *param); /* 添加IO状态读取任务的函数声
 
 MSG_T g_tMsg;
 
+StepperMotor_t g_tMotor1; // 步进电机结构体实例
+StepperMotor_t g_tMotor2; // 步进电机结构体实例
+StepperMotor_t g_tMotor3; // 步进电机结构体实例
+StepperMotor_t g_tMotor4; // 步进电机结构体实例
+
 /**
  * @brief         设置系统时钟为48Mhz，必须在HAL_Init之后调用
  * 
@@ -134,6 +139,70 @@ void IO_Status_Write_Task(void *param)
 
 }
 
+void Motor_Control_Task(void *param)
+{
+  if (g_tMotor1.state == STEPPER_STATE_IDLE)
+  {
+
+    /*
+        // 读取g_tVar.P[]
+byte10          默认状态                0         
+                电机移动到目标位置       1
+                电机移动相对位置         2
+                电机匀速运动             3    （会按照 byte18）
+                电机急停                4
+                电机停止（减速停止）      5
+
+
+                byte11          电机速度寄存器              只能为正值
+                byte12          电机最大速度寄存器          只能为正值
+                byte13          电机启动速度寄存器          只能为正值
+                byte14          电机加速度寄存器            只能为正值
+                byte15          电机当前位置                只读
+                byte16          电机移动到目标位置（绝对位置）           只能为正值
+                byte17          电机移动到相对位置           正值为正转，负值为反转。绝对位置不能突破到0以下。
+                byte18          电机匀速运动寄存器           正值为正转，负值为反转。
+                byte19          是否启动限位开关             1 启动限位开关  0不启用限位
+                byte20          正转限位开关编号            
+                byte21          反转限位开关编号
+                byte22          电机当前运行状态
+    */
+    if (g_tVar.P[10] == 1)
+    {
+      Stepper_SetSpeed(&g_tMotor1,g_tVar.P[12], g_tVar.P[13], g_tVar.P[14]); // 设置电机速度
+      Stepper_MoveTo(&g_tMotor1, g_tVar.P[16]); // 移动到目标位置
+    }else if (g_tVar.P[10] == 2)
+    {
+      Stepper_SetSpeed(&g_tMotor1, g_tVar.P[12], g_tVar.P[13], g_tVar.P[14]); // 设置电机速度
+      if (g_tVar.P[17] > 0)
+      {
+        Stepper_Move(&g_tMotor1, g_tVar.P[17], STEPPER_DIR_CW); // 移动相对位置
+      }else if (g_tVar.P[17] < 0)
+      {
+        Stepper_Move(&g_tMotor1, -g_tVar.P[17], STEPPER_DIR_CCW); // 移动相对位置
+      }
+    }else if (g_tVar.P[10] == 3)
+    {
+      Stepper_RunSpeed(&g_tMotor1, g_tVar.P[18]); // 匀速运动
+    }
+    g_tVar.P[10] = 0; // 清除命令
+  }else{
+    // 如果电机正在运行，检查是否需要停止
+    if (g_tVar.P[10] == 4)
+    {
+      Stepper_Stop(&g_tMotor1, 1); // 立即停止
+      g_tVar.P[10] = 0; // 清除命令
+    }else if (g_tVar.P[10] == 0)
+    {
+      Stepper_Stop(&g_tMotor1, 0); // 减速停止
+      g_tVar.P[10] = 0; // 清除命令
+    }
+
+  }
+  g_tVar.P[22] = g_tMotor1.state; // 更新电机状态
+  g_tVar.P[15] = g_tMotor1.position; // 更新电机当前位置
+}
+
 void ModbusPoll_Task(void *param)
 {
   MODS_Poll();
@@ -162,6 +231,7 @@ void SystemSoftTime_init(void)
   SoftTimer_Create(100, 0, IO_Status_Read_Task, NULL);      // IO状态读取定时器
   SoftTimer_Create(100, 0, IO_Status_Write_Task, NULL);     // IO状态写入定时器
   SoftTimer_Create(10, 0, ModbusPoll_Task, NULL);           // Modbus从站轮询定时器
+  // SoftTimer_Create(100, 0, Motor_Control_Task, NULL);        // 电机控制定时器
 }
 
 void Motor1PinControl(StepperPinType_t pinType, uint8_t state)
@@ -301,10 +371,7 @@ void Motor_io_init(void)
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET); // PB3
 }
 
-StepperMotor_t g_tMotor1; // 步进电机结构体实例
-StepperMotor_t g_tMotor2; // 步进电机结构体实例
-StepperMotor_t g_tMotor3; // 步进电机结构体实例
-StepperMotor_t g_tMotor4; // 步进电机结构体实例
+
 
 /**
   * @brief  Main program.
@@ -339,24 +406,22 @@ int main(void)
 
   Stepper_Init(&g_tMotor1, Motor1PinControl); // 初始化步进电机
 
-  Stepper_SetSpeed(&g_tMotor1, 6000, 800, 1000); // 设置电机速度
-  Stepper_MoveTo(&g_tMotor1, 100000); // 设置目标位置为1000步
+  g_tVar.P[12] = 6000; // 清除保持寄存器
+  g_tVar.P[13] = 800; // 清除命令
+  g_tVar.P[14] = 500; // 清除命令
 
 
-  // 测试特定的行程距离
-  // 选择其中一个步数进行测试
-
-
+  Stepper_SetSpeed(&g_tMotor1, 6000, 800, 500); // 设置电机速度
+  // Stepper_Move(&g_tMotor1, 100000, STEPPER_DIR_CW); // 向前移动1000步
+  Stepper_MoveTo(&g_tMotor1, 10000); // 移动到目标位置
 
   while (1)
   {
       /* 执行软件定时器 */
       SoftTimer_Execute();
       Stepper_ProcessAllMotors(); 
-
   }
 }
-
 
 /**
   * @brief  LED闪烁回调函数
@@ -366,9 +431,11 @@ int main(void)
 void LED_Toggle_Callback(void *param)
 {
   
-  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6); /* Toggle LED on PB6 */
-  printf("%d\r\n", Stepper_GetPosition(&g_tMotor1));
-  printf("%d\r\n", Stepper_GetState(&g_tMotor1));
+  HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6); 
+  // 获取电机1的位置
+  printf("Motor1 position: %d\r\n", g_tMotor1.position);
+  // 获取电机1的状态
+  printf("Motor1 state: %d\r\n", g_tMotor1.state);
   // uint16_t data = 0;
   // data = HC165_Read16Bits();
   // printf("Read data: %04X\r\n", data);

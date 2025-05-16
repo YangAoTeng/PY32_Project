@@ -76,14 +76,32 @@ void PendSV_Handler(void)
 {
 }
 
+extern __IO uint64_t g_motor_system_time;
+
 /**
   * @brief This function handles System tick timer.
   */
 void SysTick_Handler(void)
 {
-  HAL_IncTick();
-  /* 更新软件定时器系统时间，HAL库默认SysTick是1ms中断 */
-  SoftTimer_UpdateTick(1);
+  static uint32_t tick = 0;
+
+  tick++;
+
+  if (tick > 200)           // 200KHZ -> 1000HZ
+  {
+    HAL_IncTick();
+    SoftTimer_UpdateTick(1);
+    tick = 0;
+  }
+  g_motor_system_time+= 5; // 更新系统时间(单位:5us)
+  
+  // /* 更新软件定时器系统时间，HAL库默认SysTick是1ms中断 */
+
+  // // PA4 m1  PB3 M2 PA0 M3 PA1 M4
+  // HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_4); // 切换PA4引脚状态
+  // HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_3); // 切换PB3引脚状态
+  // HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_0); // 切换PA0引脚状态
+  // HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_1); // 切换PA1引脚状态
 }
 
 void USART1_IRQHandler(void)

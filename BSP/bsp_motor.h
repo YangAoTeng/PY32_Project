@@ -19,15 +19,20 @@ typedef enum {
     STEPPER_DIR_CCW = 1  // 逆时针
 } StepperDirection_t;
 
+// 引脚类型定义
+typedef enum {
+    PIN_TYPE_PWM = 0,    // PWM引脚
+    PIN_TYPE_DIR = 1,    // 方向引脚
+    PIN_TYPE_EN = 2      // 使能引脚
+} StepperPinType_t;
+
+// 引脚控制回调函数类型定义
+typedef void (*PinControlFunc_t)(StepperPinType_t pinType, uint8_t state);
+
 // 步进电机结构体
 typedef struct StepperMotor {
-    // 引脚配置
-    GPIO_TypeDef* PWM_Port;    // PWM端口
-    uint16_t PWM_Pin;          // PWM引脚
-    GPIO_TypeDef* DIR_Port;    // 方向端口
-    uint16_t DIR_Pin;          // 方向引脚
-    GPIO_TypeDef* EN_Port;     // 使能端口
-    uint16_t EN_Pin;           // 使能引脚
+    // 引脚控制回调函数
+    PinControlFunc_t PinControl;   // 引脚控制回调函数
     
     // 运行状态
     StepperState_t state;      // 电机状态
@@ -41,9 +46,8 @@ typedef struct StepperMotor {
     uint32_t max_step_delay;   // 最大步进延时(启动速度)
     uint32_t accel_steps;      // 加速步数
       // 时间控制
-    uint32_t last_step_time;   // 上次步进时间
+    uint64_t last_step_time;   // 上次步进时间
     uint8_t pulse_state;       // PWM脉冲状态
-    uint32_t pulse_width;      // PWM脉冲宽度(us)
     
     // 限位开关标志
     uint8_t limit_enabled;     // 限位开关使能标志
@@ -55,20 +59,20 @@ typedef struct StepperMotor {
 } StepperMotor_t;
 
 /**
- * @brief 初始化步进电机
+ * @brief 注册步进电机引脚控制回调函数
  * @param motor 步进电机结构体指针
- * @param pwm_port PWM端口
- * @param pwm_pin PWM引脚
- * @param dir_port 方向端口
- * @param dir_pin 方向引脚
- * @param en_port 使能端口
- * @param en_pin 使能引脚
+ * @param pinControlFunc 引脚控制回调函数
  * @return None
  */
-void Stepper_Init(StepperMotor_t* motor, 
-                 GPIO_TypeDef* pwm_port, uint16_t pwm_pin,
-                 GPIO_TypeDef* dir_port, uint16_t dir_pin,
-                 GPIO_TypeDef* en_port, uint16_t en_pin);
+void Stepper_RegisterPinControl(StepperMotor_t* motor, PinControlFunc_t pinControlFunc);
+
+/**
+ * @brief 初始化步进电机
+ * @param motor 步进电机结构体指针
+ * @param pinControlFunc 引脚控制回调函数（可为NULL）
+ * @return None
+ */
+void Stepper_Init(StepperMotor_t* motor, PinControlFunc_t pinControlFunc);
 
 /**
  * @brief 设置步进电机速度参数

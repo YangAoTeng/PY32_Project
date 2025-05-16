@@ -31,15 +31,13 @@
 #include "main.h"
 #include "bsp_usart.h"
 #include "soft_timer.h"
-#include "ring_buffer.h"
-#include "bsp_24c02.h"  /* 添加24C02头文件 */
-#include "bsp_at.h"     /* 添加AT命令处理头文件 */
 #include "hardware_timr.h" /* 添加硬件定时器头文件 */
 #include "modbus_slave.h" /* 添加Modbus从站头文件 */
-#include "msg_fifo.h" /* 添加消息FIFO头文件 */
 #include "bsp_flash.h" /* 添加Flash操作头文件 */
 #include "74HC595.h" /* 添加74HC595头文件 */
 #include "74HC165.h" /* 添加74HC165头文件 */
+#include "bsp_motor.h"
+// #include "msg_fifo.h"
 
 /* Private define ------------------------------------------------------------*/
 /* Private variables ---------------------------------------------------------*/
@@ -96,24 +94,6 @@ static void APP_SystemClockConfig(void)
 }
 
 
-/**
-  * @brief  处理串口接收数据任务，作为软件定时器回调函数
-  * @param  param 回调函数参数
-  * @retval None
-  */
-void UART_Process_Task(void *param)
-{
-    uint8_t data;
-    
-    /* 从环形缓冲区读取数据 */
-    while (!RingBuffer_IsEmpty(&uart_rx_ring_buffer))
-    {
-        RingBuffer_Read(&uart_rx_ring_buffer, &data);
-        printf("%c", data);
-        // /* 传递数据给AT命令处理模块 */
-        // AT_ProcessRxData(data);
-    }
-}
 
 /**
   * @brief  IO状态读取任务，作为软件定时器回调函数
@@ -122,23 +102,42 @@ void UART_Process_Task(void *param)
   */
 void IO_Status_Read_Task(void *param)
 {
-    /* 读取PB0、PB1和PB2的IO状态 */
-    GPIO_PinState pb0_state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_0);
-    GPIO_PinState pb1_state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_1);
-    GPIO_PinState pb2_state = HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_2);
-    MODS_WriteRegister(1, 0, pb0_state); /* 写入PB0状态 */
-    MODS_WriteRegister(1, 1, pb1_state); /* 写入PB1状态 */
-    MODS_WriteRegister(1, 2, pb2_state); /* 写入PB2状态 */
+  uint16_t data = HC165_Read16Bits();
+  // printf("Read data: %04X\r\n", data);
+  // 将16位数据的每一位分别存入g_tVar.T数组
+  for (int i = 0; i < 16; i++)
+  {
+    g_tVar.T[i] = (data >> i) & 0x01;  // 提取data的第i位，存入T[i]
+  }
 }
 
+// 当前IO的状态 
+uint32_t g_u32IOStatus = 0; // 当前IO状态
 
-void HardTimer_Callback(void *param)
+void IO_Status_Write_Task(void *param)
 {
-    printf("TIM3->CNT: %d\r\n", TIM3->CNT);
-    printf("Hard Timer Callback\r\n");
-    // HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
+  // 1. 读取 g_tVar.D数组中线圈的状态，按照位放在 g_u32IOStatus中
+
+  // 遍历D数组（线圈状态），组合成一个32位整数
+  for (int i = 0; i < D_COIL_SIZE && i < 16; i++) // 只处理前24位，因为74HC595接收24位
+  {
+    if (g_tVar.D[i]) // 如果线圈状态为1
+    {
+      g_u32IOStatus |= (1UL << i); // 将对应位置1
+    }else{
+      g_u32IOStatus &= ~(1UL << i); // 将对应位置0
+    }
+  }
+
+  // 2. 将 g_u32IOStatus 中的状态写入到74HC595中
+  HC595_Send24Bits(g_u32IOStatus); // 发送24位数据到74HC595
+
 }
 
+void ModbusPoll_Task(void *param)
+{
+  MODS_Poll();
+}
 
 
 SystemParam_t g_tSysParam = {0}; // 系统参数结构体
@@ -155,6 +154,158 @@ void SystemParam_Init(void)
   }
 }
 
+
+
+void SystemSoftTime_init(void)
+{
+  SoftTimer_Create(1000, 0, LED_Toggle_Callback, NULL);     // LED闪烁定时器
+  SoftTimer_Create(100, 0, IO_Status_Read_Task, NULL);      // IO状态读取定时器
+  SoftTimer_Create(100, 0, IO_Status_Write_Task, NULL);     // IO状态写入定时器
+  SoftTimer_Create(10, 0, ModbusPoll_Task, NULL);           // Modbus从站轮询定时器
+}
+
+void Motor1PinControl(StepperPinType_t pinType, uint8_t state)
+{
+  switch (pinType)
+  {
+    case PIN_TYPE_PWM:
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4, state ? GPIO_PIN_SET : GPIO_PIN_RESET); // PA4
+      break;
+    case PIN_TYPE_DIR:
+      // HC959 BIT 16  DIR 
+      if (state)
+        g_u32IOStatus |= (1UL << 17);  // 设置第16位为1
+      else
+        g_u32IOStatus &= ~(1UL << 17); // 设置第16位为0
+        HC595_Send24Bits(g_u32IOStatus); // 更新74HC595的状态
+      break;
+    case PIN_TYPE_EN:
+      // HC959 BIT 17  EN
+      if (state)
+        g_u32IOStatus |= (1UL << 16);  // 设置第17位为1
+      else
+        g_u32IOStatus &= ~(1UL << 16); // 设置第17位为0
+        HC595_Send24Bits(g_u32IOStatus); // 更新74HC595的状态
+      break;
+    default:
+      break;
+  }
+
+}
+
+void Motor2PinControl(StepperPinType_t pinType, uint8_t state)
+{
+  switch (pinType)
+  {
+    case PIN_TYPE_PWM:
+      HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, state ? GPIO_PIN_SET : GPIO_PIN_RESET); // PB3
+      break;
+    case PIN_TYPE_DIR:
+      // HC959 BIT 16  DIR 
+      if (state)
+        g_u32IOStatus |= (1UL << 19);  // 设置第16位为1
+      else
+        g_u32IOStatus &= ~(1UL << 19); // 设置第16位为0
+        HC595_Send24Bits(g_u32IOStatus); // 更新74HC595的状态
+      break;
+    case PIN_TYPE_EN:
+      // HC959 BIT 17  EN
+      if (state)
+        g_u32IOStatus |= (1UL << 18);  // 设置第17位为1
+      else
+        g_u32IOStatus &= ~(1UL << 18); // 设置第17位为0
+        HC595_Send24Bits(g_u32IOStatus); // 更新74HC595的状态
+      break;
+    default:
+      break;
+  }
+}
+
+void Motor3PinControl(StepperPinType_t pinType, uint8_t state)
+{
+  switch (pinType)
+  {
+    case PIN_TYPE_PWM:
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_0, state ? GPIO_PIN_SET : GPIO_PIN_RESET); // PA0
+      break;
+    case PIN_TYPE_DIR:
+      // HC959 BIT 16  DIR 
+      if (state)
+        g_u32IOStatus |= (1UL << 21);  
+      else
+        g_u32IOStatus &= ~(1UL << 21); 
+        HC595_Send24Bits(g_u32IOStatus); // 更新74HC595的状态
+      break;
+    case PIN_TYPE_EN:
+      // HC959 BIT 17  EN
+      if (state)
+        g_u32IOStatus |= (1UL << 20);  
+      else
+        g_u32IOStatus &= ~(1UL << 20); 
+        HC595_Send24Bits(g_u32IOStatus); // 更新74HC595的状态
+      break;
+    default:
+      break;
+  }
+}
+
+void Motor4PinControl(StepperPinType_t pinType, uint8_t state)
+{
+  switch (pinType)
+  {
+    case PIN_TYPE_PWM:
+      HAL_GPIO_WritePin(GPIOA, GPIO_PIN_1, state ? GPIO_PIN_SET : GPIO_PIN_RESET); // PA1
+      break;
+    case PIN_TYPE_DIR:
+      // HC959 BIT 16  DIR 
+      if (state)
+        g_u32IOStatus |= (1UL << 23);  
+      else
+        g_u32IOStatus &= ~(1UL << 23); 
+        HC595_Send24Bits(g_u32IOStatus); // 更新74HC595的状态
+      break;
+    case PIN_TYPE_EN:
+      // HC959 BIT 17  EN
+      if (state)
+        g_u32IOStatus |= (1UL << 22);  
+      else
+        g_u32IOStatus &= ~(1UL << 22); 
+        HC595_Send24Bits(g_u32IOStatus); // 更新74HC595的状态
+      break;
+    default:
+      break;
+  }
+}
+
+void Motor_io_init(void)
+{
+  // PA4 m1  PB3 M2 PA0 M3 PA1 M4
+  GPIO_InitTypeDef GPIO_InitStruct = {0};
+  // 启用GPIOA时钟
+  __HAL_RCC_GPIOA_CLK_ENABLE();
+  // 启用GPIOB时钟
+  __HAL_RCC_GPIOB_CLK_ENABLE();
+
+  GPIO_InitStruct.Pin = GPIO_PIN_4 | GPIO_PIN_0 | GPIO_PIN_1; // PA4, PA0, PA1
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP; /* Push-pull output */
+  GPIO_InitStruct.Pull = GPIO_NOPULL;        /* No pull-up or pull-down */
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH; /* Low speed */
+  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
+  GPIO_InitStruct.Pin = GPIO_PIN_3; // PB3
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP; /* Push-pull output */
+  GPIO_InitStruct.Pull = GPIO_NOPULL;        /* No pull-up or pull-down */
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH; /* Low speed */
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
+  // 设置初始状态
+  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_4 | GPIO_PIN_0 | GPIO_PIN_1, GPIO_PIN_RESET); // PA4, PA0, PA1
+  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_3, GPIO_PIN_RESET); // PB3
+}
+
+StepperMotor_t g_tMotor1; // 步进电机结构体实例
+StepperMotor_t g_tMotor2; // 步进电机结构体实例
+StepperMotor_t g_tMotor3; // 步进电机结构体实例
+StepperMotor_t g_tMotor4; // 步进电机结构体实例
+
 /**
   * @brief  Main program.
   * @retval int
@@ -164,6 +315,7 @@ int main(void)
   /* Reset of all peripherals, Initializes the Systick */
   HAL_Init();                                  
   APP_SystemClockConfig(); /* Configure the system clock */
+  HAL_SYSTICK_Config(SystemCoreClock /200000);
   SystemParam_Init(); // 初始化系统参数
 
 
@@ -174,47 +326,34 @@ int main(void)
   
   /* 初始化软件定时器 */
   SoftTimer_Init();
-  /* 初始化EEPROM */
-  // EEPROM_Init();
-  // /* 初始化AT命令处理模块 */
-  // AT_Init();
-  printf("SystemParam Read: %d\r\n", g_tSysParam.baud);
-  printf("SystemParam Read: %d\r\n", g_tSysParam.modbusId);
 
-
-
-  printf("SystemCoreClock: %d\r\n", SystemCoreClock);
-  // printf("AT command interface ready, type 'AT+HELP' for help\r\n");
-
-
-
-  /* 创建LED闪烁定时器(无限循环) */
-  uint8_t timer1 = SoftTimer_Create(1000, 0, LED_Toggle_Callback, NULL);
-  printf("LED toggle timer created, ID: %d\r\n", timer1);
-
-  SoftTimer_SetUserData(timer1, 12345);
+  bsp_InitHardTimer();  // 初始化硬件定时器
   
-  // /* 创建UART处理定时器，10ms周期执行 */
-  // uint8_t timer2 = SoftTimer_Create(10, 0, UART_Process_Task, NULL);
-  // printf("UART process timer created, ID: %d\r\n", timer2);
-  
-  // /* 创建IO状态读取定时器，10ms周期执行 */
-  // uint8_t timer3 = SoftTimer_Create(100, 0, IO_Status_Read_Task, NULL);
-  // printf("IO status read timer created, ID: %d\r\n", timer3);
-  bsp_InitHardTimer();
-  
-  HC595_Init();
-  HC595_Send24Bits(0xFFFFFF);
+  HC595_Init();       // 输出初始化
+  HC165_Init();       // 输入初始化
+  Motor_io_init();    // 电机IO初始化
 
-  HC165_Init();
+  MODS_Init();        // Modbus从站初始化
 
-  // MODS_Init();
-  // bsp_StartHardTimer(1, 65535, HardTimer_Callback);
+  SystemSoftTime_init(); // 初始化软件定时器
+
+  Stepper_Init(&g_tMotor1, Motor1PinControl); // 初始化步进电机
+
+  Stepper_SetSpeed(&g_tMotor1, 6000, 800, 1000); // 设置电机速度
+  Stepper_MoveTo(&g_tMotor1, 100000); // 设置目标位置为1000步
+
+
+  // 测试特定的行程距离
+  // 选择其中一个步数进行测试
+
+
+
   while (1)
   {
       /* 执行软件定时器 */
       SoftTimer_Execute();
-      // MODS_Poll();
+      Stepper_ProcessAllMotors(); 
+
   }
 }
 
@@ -228,9 +367,11 @@ void LED_Toggle_Callback(void *param)
 {
   
   HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_6); /* Toggle LED on PB6 */
-  uint16_t data = 0;
-  data = HC165_Read16Bits();
-  printf("Read data: %04X\r\n", data);
+  printf("%d\r\n", Stepper_GetPosition(&g_tMotor1));
+  printf("%d\r\n", Stepper_GetState(&g_tMotor1));
+  // uint16_t data = 0;
+  // data = HC165_Read16Bits();
+  // printf("Read data: %04X\r\n", data);
 
   // uint16_t led = 0;
   // if (bsp_GetMsg(&g_tModS_Fifo, &g_tMsg) == 0)

@@ -6,35 +6,39 @@
 #include "bsp_motor.h"
 #include <stdlib.h>
 
+// 系统时间(单位:1us)
+uint64_t __IO g_motor_system_time = 0;            
+
 // 全局链表头指针，用于管理所有电机
 static StepperMotor_t* g_stepper_list = NULL;
 
 // 私有函数声明
 static void Stepper_SetDirection(StepperMotor_t* motor, StepperDirection_t dir);
 static void Stepper_TogglePulse(StepperMotor_t* motor);
-// static uint32_t SoftTimer_GetSystemTime(void); // 声明系统时间函数，需要外部实现
+
+/**
+ * @brief 注册步进电机引脚控制回调函数
+ */
+void Stepper_RegisterPinControl(StepperMotor_t* motor, PinControlFunc_t pinControlFunc)
+{
+    if (motor != NULL) {
+        motor->PinControl = pinControlFunc;
+    }
+}
 
 /**
  * @brief 初始化步进电机
  */
-void Stepper_Init(StepperMotor_t* motor, 
-                 GPIO_TypeDef* pwm_port, uint16_t pwm_pin,
-                 GPIO_TypeDef* dir_port, uint16_t dir_pin,
-                 GPIO_TypeDef* en_port, uint16_t en_pin)
+void Stepper_Init(StepperMotor_t* motor, PinControlFunc_t pinControlFunc)
 {
-    // 保存引脚配置
-    motor->PWM_Port = pwm_port;
-    motor->PWM_Pin = pwm_pin;
-    motor->DIR_Port = dir_port;
-    motor->DIR_Pin = dir_pin;
-    motor->EN_Port = en_port;
-    motor->EN_Pin = en_pin;
-    
     // 初始化电机状态
     motor->state = STEPPER_STATE_IDLE;
     motor->dir = STEPPER_DIR_CW;
     motor->position = 0;
     motor->target_position = 0;
+    
+    // 注册引脚控制回调函数
+    motor->PinControl = pinControlFunc;
     
     // 设置默认速度参数
     motor->step_delay = 1000;      // 默认延时1ms
@@ -45,7 +49,7 @@ void Stepper_Init(StepperMotor_t* motor,
     // 初始化时间控制
     motor->last_step_time = 0;
     motor->pulse_state = 0;
-    motor->pulse_width = 10;       // 默认脉冲宽度10us
+    // 移除 pulse_width 初始化
     
     // 初始化限位开关
     motor->limit_enabled = 0;      // 默认禁用限位开关
@@ -55,11 +59,12 @@ void Stepper_Init(StepperMotor_t* motor,
     // 初始化链表指针
     motor->next = NULL;
     
-    // 设置引脚状态
-    HAL_GPIO_WritePin(motor->PWM_Port, motor->PWM_Pin, GPIO_PIN_RESET);
-    HAL_GPIO_WritePin(motor->DIR_Port, motor->DIR_Pin, 
-                     (motor->dir == STEPPER_DIR_CW) ? GPIO_PIN_RESET : GPIO_PIN_SET);
-    HAL_GPIO_WritePin(motor->EN_Port, motor->EN_Pin, GPIO_PIN_SET); // 默认禁用电机
+    // 设置引脚状态(如果已注册回调函数)
+    if (motor->PinControl != NULL) {
+        motor->PinControl(PIN_TYPE_PWM, 0);  // PWM引脚低电平
+        motor->PinControl(PIN_TYPE_DIR, (motor->dir == STEPPER_DIR_CW) ? 0 : 1);  // 方向引脚
+        motor->PinControl(PIN_TYPE_EN, 1);  // 使能引脚高电平(禁用电机)
+    }
     
     // 添加到电机管理列表
     Stepper_AddMotor(motor);
@@ -122,6 +127,12 @@ void Stepper_Move(StepperMotor_t* motor, uint32_t steps, StepperDirection_t dir)
         motor->state = STEPPER_STATE_RUNNING;
     }
     
+    // 重要：重置脉冲状态，确保从低电平开始
+    motor->pulse_state = 0;
+    if (motor->PinControl != NULL) {
+        motor->PinControl(PIN_TYPE_PWM, 0);
+    }
+    
     // 使能电机
     Stepper_Enable(motor, 1);
 }
@@ -176,11 +187,13 @@ void Stepper_Stop(StepperMotor_t* motor, uint8_t immediate)
  */
 void Stepper_Enable(StepperMotor_t* motor, uint8_t enable)
 {
-    if (enable) {
-        HAL_GPIO_WritePin(motor->EN_Port, motor->EN_Pin, GPIO_PIN_RESET); // 低电平使能
-    } else {
-        HAL_GPIO_WritePin(motor->EN_Port, motor->EN_Pin, GPIO_PIN_SET);   // 高电平禁用
-        motor->state = STEPPER_STATE_IDLE; // 禁用时设为空闲状态
+    if (motor->PinControl != NULL) {
+        if (enable) {
+            motor->PinControl(PIN_TYPE_EN, 0); // 低电平使能
+        } else {
+            motor->PinControl(PIN_TYPE_EN, 1); // 高电平禁用
+            motor->state = STEPPER_STATE_IDLE; // 禁用时设为空闲状态
+        }
     }
 }
 
@@ -189,10 +202,11 @@ void Stepper_Enable(StepperMotor_t* motor, uint8_t enable)
  */
 void Stepper_Handler(StepperMotor_t* motor)
 {
-    uint32_t current_time = SoftTimer_GetSystemTime(); // 获取当前系统时间
+    uint64_t current_time = g_motor_system_time; // 获取当前系统时间
     
     // 处理脉冲信号
-    if (motor->state != STEPPER_STATE_IDLE) {        // 检查限位开关状态
+    if (motor->state != STEPPER_STATE_IDLE) {
+        // 检查限位开关状态
         if (motor->limit_enabled) {
             // 检查当前方向的限位开关是否触发
             if ((motor->dir == STEPPER_DIR_CW && motor->cw_limit) ||
@@ -210,27 +224,26 @@ void Stepper_Handler(StepperMotor_t* motor)
             }
         }
         
-        if (motor->pulse_state == 1) {
-            // 脉冲为高，等待转为低
-            if (current_time - motor->last_step_time >= motor->pulse_width) {
-                HAL_GPIO_WritePin(motor->PWM_Port, motor->PWM_Pin, GPIO_PIN_RESET);
-                motor->pulse_state = 0;
-            }
-        } else {
-            // 脉冲为低，检查是否需要产生新的脉冲
-            if (current_time - motor->last_step_time >= motor->step_delay) {
-                // 检查是否达到目标位置
-                if ((motor->dir == STEPPER_DIR_CW && motor->position >= motor->target_position) ||
-                    (motor->dir == STEPPER_DIR_CCW && motor->position <= motor->target_position)) {
-                    // 达到目标位置，停止
-                    motor->state = STEPPER_STATE_IDLE;
-                    return;
+        // 计算半个周期的时间（50%占空比）
+        uint32_t half_period = motor->step_delay / 2;
+        
+        // 检查是否需要切换脉冲状态
+        if (current_time - motor->last_step_time >= half_period) {
+            motor->last_step_time = current_time;
+            
+            // 切换脉冲状态
+            if (motor->pulse_state == 0) {
+                // 从低电平切换到高电平（脉冲开始）
+                if (motor->PinControl != NULL) {
+                    motor->PinControl(PIN_TYPE_PWM, 1);  // PWM引脚高电平
                 }
-                
-                // 产生上升沿脉冲
-                HAL_GPIO_WritePin(motor->PWM_Port, motor->PWM_Pin, GPIO_PIN_SET);
                 motor->pulse_state = 1;
-                motor->last_step_time = current_time;
+            } else {
+                // 从高电平切换到低电平（脉冲结束，完成一个步进）
+                if (motor->PinControl != NULL) {
+                    motor->PinControl(PIN_TYPE_PWM, 0);  // PWM引脚低电平
+                }
+                motor->pulse_state = 0;
                 
                 // 更新位置
                 if (motor->dir == STEPPER_DIR_CW) {
@@ -239,39 +252,57 @@ void Stepper_Handler(StepperMotor_t* motor)
                     motor->position--;
                 }
                 
-                // 根据当前状态更新步进延时(加减速处理)
+                // 检查是否达到目标位置
+                if ((motor->dir == STEPPER_DIR_CW && motor->position >= motor->target_position) ||
+                    (motor->dir == STEPPER_DIR_CCW && motor->position <= motor->target_position)) {
+                    // 达到目标位置，停止
+                    motor->state = STEPPER_STATE_IDLE;
+                    return;
+                }
+                
+                // 根据当前状态计算下一步的延时(为整个周期的延时)
+                uint32_t next_delay = motor->step_delay; // 默认保持当前延时
+                
                 switch (motor->state) {
                     case STEPPER_STATE_ACCELERATING:
                     {
-                        // 计算加速阶段需要移动的距离
-                        uint32_t accel_distance;
-                        if (motor->dir == STEPPER_DIR_CW) {
-                            accel_distance = motor->position - (motor->target_position - motor->accel_steps * 2);
-                        } else {
-                            accel_distance = (motor->target_position + motor->accel_steps * 2) - motor->position;
-                        }
+                        // 计算已经走过的加速距离（从加速开始算起）
+                        static uint32_t accel_steps_taken = 0;
                         
-                        // 更新加速阶段的延迟
-                        if (accel_distance <= motor->accel_steps) {
-                            // 仍在加速
-                            // 简单线性加速公式: new_delay = max_delay - (max_delay - min_delay) * (accel_distance / accel_steps)
-                            motor->step_delay = motor->max_step_delay - 
-                                ((motor->max_step_delay - motor->min_step_delay) * accel_distance) / motor->accel_steps;
+                        // 每完成一步加速计数增加
+                        accel_steps_taken++;
+                        
+                        // 计算剩余距离 - 用于判断是否需要提前进入减速阶段
+                        uint32_t remain_distance;
+                        if (motor->dir == STEPPER_DIR_CW) {
+                            remain_distance = motor->target_position - motor->position;
                         } else {
-                            // 加速完成，开始匀速运动
-                            motor->step_delay = motor->min_step_delay;
-                            motor->state = STEPPER_STATE_RUNNING;
-                            
-                            // 检查剩余距离，决定何时开始减速
-                            uint32_t remain_distance;
-                            if (motor->dir == STEPPER_DIR_CW) {
-                                remain_distance = motor->target_position - motor->position;
-                            } else {
-                                remain_distance = motor->position - motor->target_position;
+                            remain_distance = motor->position - motor->target_position;
+                        }
+                        // 更新加速阶段的延迟
+                        if (accel_steps_taken < motor->accel_steps) {
+                            // 仍在加速
+                            next_delay = motor->max_step_delay - 
+                                ((motor->max_step_delay - motor->min_step_delay) * accel_steps_taken) / motor->accel_steps;
+                                
+                            // 确保延时不小于最小延时
+                            if (next_delay < motor->min_step_delay) {
+                                next_delay = motor->min_step_delay;
                             }
                             
+                            // 检查是否需要提前进入减速阶段（剩余距离小于等于加速步数）
                             if (remain_distance <= motor->accel_steps) {
-                                // 立即开始减速
+                                motor->state = STEPPER_STATE_DECELERATING;
+                                accel_steps_taken = 0; // 重置加速步数计数
+                            }
+                        } else {
+                            // 加速完成，进入匀速阶段
+                            next_delay = motor->min_step_delay;
+                            motor->state = STEPPER_STATE_RUNNING;
+                            accel_steps_taken = 0; // 重置加速步数计数
+                            
+                            // 检查是否需要立即开始减速
+                            if (remain_distance <= motor->accel_steps) {
                                 motor->state = STEPPER_STATE_DECELERATING;
                             }
                         }
@@ -281,6 +312,8 @@ void Stepper_Handler(StepperMotor_t* motor)
                     case STEPPER_STATE_RUNNING:
                     {
                         // 匀速运动，检查是否需要开始减速
+                        next_delay = motor->min_step_delay; // 保持最大速度
+                        
                         uint32_t remain_distance;
                         if (motor->dir == STEPPER_DIR_CW) {
                             remain_distance = motor->target_position - motor->position;
@@ -296,7 +329,7 @@ void Stepper_Handler(StepperMotor_t* motor)
                     
                     case STEPPER_STATE_DECELERATING:
                     {
-                        // 计算减速阶段需要移动的距离
+                        // 计算剩余距离（用于减速）
                         uint32_t decel_distance;
                         if (motor->dir == STEPPER_DIR_CW) {
                             decel_distance = motor->target_position - motor->position;
@@ -305,13 +338,17 @@ void Stepper_Handler(StepperMotor_t* motor)
                         }
                         
                         // 更新减速阶段的延迟
-                        // 简单线性减速公式: new_delay = min_delay + (max_delay - min_delay) * (1 - decel_distance / accel_steps)
                         if (decel_distance > 0 && motor->accel_steps > 0) {
-                            motor->step_delay = motor->min_step_delay + 
+                            next_delay = motor->min_step_delay + 
                                 ((motor->max_step_delay - motor->min_step_delay) * (motor->accel_steps - decel_distance)) / motor->accel_steps;
+                                
+                            // 确保延时不大于最大延时
+                            if (next_delay > motor->max_step_delay) {
+                                next_delay = motor->max_step_delay;
+                            }
                         } else {
-                            // 减速完成
-                            motor->step_delay = motor->max_step_delay;
+                            // 减速完成，使用启动速度
+                            next_delay = motor->max_step_delay;
                         }
                         break;
                     }
@@ -320,6 +357,9 @@ void Stepper_Handler(StepperMotor_t* motor)
                         // 保持当前延迟
                         break;
                 }
+                
+                // 更新步进延时
+                motor->step_delay = next_delay;
             }
         }
     }
@@ -423,10 +463,8 @@ static void Stepper_SetDirection(StepperMotor_t* motor, StepperDirection_t dir)
     motor->dir = dir;
     
     // 设置方向引脚
-    if (dir == STEPPER_DIR_CW) {
-        HAL_GPIO_WritePin(motor->DIR_Port, motor->DIR_Pin, GPIO_PIN_RESET);
-    } else {
-        HAL_GPIO_WritePin(motor->DIR_Port, motor->DIR_Pin, GPIO_PIN_SET);
+    if (motor->PinControl != NULL) {
+        motor->PinControl(PIN_TYPE_DIR, (dir == STEPPER_DIR_CW) ? 0 : 1);
     }
 }
 
@@ -436,12 +474,14 @@ static void Stepper_SetDirection(StepperMotor_t* motor, StepperDirection_t dir)
  */
 static void Stepper_TogglePulse(StepperMotor_t* motor)
 {
-    if (motor->pulse_state == 0) {
-        HAL_GPIO_WritePin(motor->PWM_Port, motor->PWM_Pin, GPIO_PIN_SET);
-        motor->pulse_state = 1;
-    } else {
-        HAL_GPIO_WritePin(motor->PWM_Port, motor->PWM_Pin, GPIO_PIN_RESET);
-        motor->pulse_state = 0;
+    if (motor->PinControl != NULL) {
+        if (motor->pulse_state == 0) {
+            motor->PinControl(PIN_TYPE_PWM, 1);  // PWM引脚高电平
+            motor->pulse_state = 1;
+        } else {
+            motor->PinControl(PIN_TYPE_PWM, 0);  // PWM引脚低电平
+            motor->pulse_state = 0;
+        }
     }
 }
 
@@ -467,6 +507,12 @@ void Stepper_RunSpeed(StepperMotor_t* motor, int32_t speed)
     motor->step_delay = step_delay;
     motor->target_position = (dir == STEPPER_DIR_CW) ? 0xFFFFFFFF : 0; // 设置极端值使电机持续运行
     motor->state = STEPPER_STATE_RUNNING; // 设置为匀速运行状态
+    
+    // 重置脉冲状态
+    motor->pulse_state = 0;
+    if (motor->PinControl != NULL) {
+        motor->PinControl(PIN_TYPE_PWM, 0);
+    }
     
     // 使能电机
     Stepper_Enable(motor, 1);

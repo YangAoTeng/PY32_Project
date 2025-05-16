@@ -44,11 +44,11 @@ uint16_t HC165_Read16Bits(void)
   
   /* 1. 将PL引脚拉低，加载并行数据 */
   HAL_GPIO_WritePin(HC165_GPIO_PORT, PL_PIN, GPIO_PIN_RESET);
-  HAL_Delay(1); // 延时确保数据稳定
+  // HAL_Delay(1); // 延时确保数据稳定
   
   /* 2. 将PL引脚拉高，允许移位操作 */
   HAL_GPIO_WritePin(HC165_GPIO_PORT, PL_PIN, GPIO_PIN_SET);
-  HAL_Delay(1); // 延时确保信号稳定
+  // HAL_Delay(1); // 延时确保信号稳定
   
   /* 3. 读取16位数据(每个74HC165读取8位) */
   for (i = 0; i < 16; i++)
@@ -64,9 +64,9 @@ uint16_t HC165_Read16Bits(void)
     
     /* 产生时钟上升沿，移出下一位数据 */
     HAL_GPIO_WritePin(HC165_GPIO_PORT, CP_PIN, GPIO_PIN_SET);
-    HAL_Delay(1); // 延时确保信号稳定
+    // HAL_Delay(1); // 延时确保信号稳定
     HAL_GPIO_WritePin(HC165_GPIO_PORT, CP_PIN, GPIO_PIN_RESET);
-    HAL_Delay(1); // 延时确保信号稳定
+    // HAL_Delay(1); // 延时确保信号稳定
   }
   
   return data;
